@@ -1,33 +1,40 @@
-#!/usr/bin/env bash
+#!/usr/bin/env sh
 
 #
 # Adone init script (based on https://github.com/tj/n).
 #
 
-VERSION="0.1.0"
-INIT_PREFIX=${INIT_PREFIX-.}
+VERSION="0.1.1"
+INIT_PREFIX=${INIT_PREFIX-~/.avm}
 N_PREFIX=${N_PREFIX-/usr/local}
 BASE_VERSIONS_DIR=$INIT_PREFIX/versions
 NODE="node"
-NODE_URL=${NODE_URL-https://nodejs.org/dist/}
+NODE_URL=${NODE_URL-http://adone.io/public/dist/node/}
 NODE_VERSIONS_DIR=$BASE_VERSIONS_DIR/node
+
+log() {
+  printf "  \033[32m%10s\033[0m : \033[2m%s\033[22m\033[0m\n" $1 $2
+}
+
+error() {
+    printf "\n  \033[31mError: $@\033[0m\n"
+}
+
+abort() {
+  error "$@" && printf "\n" && exit 1
+}
+
 #
 # Ensure we have curl or wget support.
 #
 
-CURL_PARAMS=( "-L"
-              "-#")
-
-WGET_PARAMS=( "--no-check-certificate"
-              "-q"
-              "-O-")
+CURL_PARAMS="-L -#"
+WGET_PARAMS="-q -O-"
 
 GET=
 
-# wget support
-command -v wget > /dev/null && GET="wget ${WGET_PARAMS[@]}"
-
-command -v curl > /dev/null && GET="curl ${CURL_PARAMS[@]}" && QUIET=false
+which wget > /dev/null && GET="wget ${WGET_PARAMS}"
+which curl > /dev/null && GET="curl ${CURL_PARAMS}"
 
 test -z "$GET" && abort "curl or wget required"
 
@@ -35,18 +42,9 @@ test -z "$GET" && abort "curl or wget required"
 # State
 #
 
-QUIET=true
-ACTIVATE=true
+QUIET=false
+DOWNLOAD=false
 ARCH=
-
-log() {
-  printf "  \033[32m%10s\033[0m : \e[2m%s\e[22m\033[0m\n" $1 $2
-}
-
-abort() {
-  printf "\n  \033[31mError: $@\033[0m\n\n" && exit 1
-}
-
 
 test -d ${NODE_VERSIONS_DIR} || mkdir -p ${NODE_VERSIONS_DIR}
 
@@ -69,37 +67,42 @@ set_arch() {
 display_help() {
   cat <<-EOF
 
-  Usage: init [options] [COMMAND] [args]
+  Usage: avm [options] [COMMAND] [args]
 
   Commands:
 
-    init                              Output versions installed
-    init latest                       Install or activate the latest node release
-    init -a x86 latest                As above but force 32 bit architecture
-    init stable                       Install or activate the latest stable node release
-    init lts                          Install or activate the latest LTS node release
-    init <version>                    Install node <version>
-    init use <version> [args ...]     Execute node <version> with [args ...]
-    init bin <version>                Output bin path for <version>
-    init rm <version ...>             Remove the given version(s)
-    init --latest                     Output the latest node version available
-    init --stable                     Output the latest stable node version available
-    init --lts                        Output the latest LTS node version available
-    init list                         Output the versions of node available
+    avm                              Output local available versions
+    avm install                      Install avm global
+    avm uninstall                    Uninstall global installed avm
+    avm update                       Update global installed avm
+    avm list                         Output available adone versions
+    avm [--download] [--sources] <version>
+                                     Install adone <version>. <version> can be 'latest'
+    avm rm [--active] <version ...>  Remove the given adone version(s)
+    avm node list                    Output available node versions
+    avm node [--download] [--sources] <version>
+                                     Install node <version>. <version> can be 'latest'
+    avm node [--active] rm <version ...>
+                                     Remove the given node version(s)
+    avm backup                       Backup current adone version
+    avm [--complete] clear           Delete all downloaded
 
   Options:
 
-    -V, --version   Output current version of n
-    -h, --help      Display help information
+    -V, --version   Output current version of avm
+    -h, --help      Display this help information
     -q, --quiet     Disable curl output (if available)
     -d, --download  Download only
+    -s, --sources   Download sources instead of build
     -a, --arch      Override system architecture
+    --active        Force deletetion of active adone/node version
+    --complete      Force deletetion of active adone/node version
 
 EOF
 }
 
 err_no_installed_print_help() {
-  printf "\n  \033[31mError: no installed version\033[0m\n"
+  error "no installed version"
   display_help
   exit 1
 }
@@ -112,17 +115,13 @@ display_version() {
 # Check for installed version, and populate $active
 #
 
-check_current_version() {
-  command -v node &> /dev/null
-  if test $? -eq 0; then
+check_current_node_version() {
+  if which node > /dev/null; then
     local current=$(node --version)
-    if [ -n "$PROJECT_VERSION_CHECK" ]; then
-      current=$(node -p "$PROJECT_VERSION_CHECK || process.exit(1)" || node --version)
-    fi
     current=${current#v}
-    if diff &> /dev/null \
+    if cmp -s \
       $BASE_VERSIONS_DIR/$NODE/$current/bin/node \
-      $(which node) ; then
+      `which node` ; then
       active=$NODE/$current
     fi
   fi
@@ -148,9 +147,9 @@ display_versions_with_selected() {
   echo
   for version in $(versions_paths); do
     if test "$version" = "$selected"; then
-      printf "  \033[32m\u2713\033[0m [1m$version[m\033[0m\n"
+      printf "  \033[32m+\033[0m [1m$version[m\033[0m\n"
     else
-      printf "    \e[2m$version\e[22m\n"
+      printf "    \033[2m$version\033[22m\n"
     fi
   done
   echo
@@ -171,7 +170,7 @@ list_versions_installed() {
 #
 
 display_versions() {
-  check_current_version
+  check_current_node_version
   display_versions_with_selected $active
 }
 
@@ -187,7 +186,7 @@ erase_line() {
 # Check if the HEAD response of <url> is 200.
 #
 is_ok() {
-  if command -v curl > /dev/null; then
+  if which curl > /dev/null; then
     $GET -Is $1 | head -n 1 | grep 200 > /dev/null
   else
     $GET -S --spider 2>&1 $1 | head -n 1 | grep 200 > /dev/null
@@ -198,7 +197,7 @@ is_ok() {
 # Check if the OSS(Object Storage Service) mirror is ok.
 #
 is_oss_ok() {
-  if command -v curl > /dev/null; then
+  if which curl > /dev/null; then
     if $GET -Is $1 | head -n 1 | grep 302 > /dev/null; then
       is_oss_ok $GET -Is $1 | grep Location | awk -F ': ' '{print $2}'
     else
@@ -236,16 +235,16 @@ tarball_url() {
     *armv7l*) arch=armv7l ;;
   esac
 
-  if [ ${arch} = "armv6l" -a ${NODE} = node ]; then
+  if test "$arch" = "armv6l" && test "$NODE" = node; then
     local semver=${version//./ }
     local major=$(echo $semver | grep -o -E '[0-9]+' | head -1 | sed -e 's/^0\+//')
     local minor=$(echo $semver | awk '{print $2}' | grep -o -E '[0-9]+' | head -1 | sed -e 's/^0\+//')
-    [[ $major -eq "" && $minor -lt 12 ]] && arch=arm-pi
+    test $major -eq "" && test $minor -lt 12 && arch=arm-pi
   fi
 
-  [ ! -z $ARCH ] && arch=$ARCH
+  test -n "$ARCH" && arch=$ARCH
 
-  echo "${NODE_URL}v${version}/${NODE}-v${version}-${os}-${arch}.tar.gz"
+  echo "${NODE_URL}${version}/${os}-${arch}.tar.gz"
 
 }
 
@@ -275,12 +274,12 @@ disable_pax_mprotect() {
 }
 
 #
-# Activate <version>
+# Activate node <version>
 #
 
 activate() {
   local version=$1
-  check_current_version
+  check_current_node_version
   if test "$version" != "$active"; then
     local dir=$BASE_VERSIONS_DIR/$version
     for subdir in bin lib include share; do
@@ -295,34 +294,20 @@ activate() {
 }
 
 #
-# Install latest version.
+# Check root access
 #
 
-install_latest() {
-  install $(display_latest_version)
+check_root() {
+  test `id -u` -eq 0
 }
 
 #
-# Install latest stable version.
+# Install node <version>
 #
 
-install_stable() {
-  install $(display_latest_stable_version)
-}
+install_node() {
+  check_root || abort "root access required"
 
-#
-# Install latest LTS version.
-#
-
-install_lts() {
-  install $(display_latest_lts_version)
-}
-
-#
-# Install <version>
-#
-
-install() {
   local version=${1#v}
 
   local dots=$(echo $version | sed 's/[^.]*//g')
@@ -342,8 +327,8 @@ install() {
   local dir=${NODE_VERSIONS_DIR}/$version
 
   if test -d $dir; then
-    if [[ ! -e $dir/n.lock ]] ; then
-      if $ACTIVATE ; then
+    if test ! -e $dir/n.lock; then
+      if test $DOWNLOAD = false ; then
         activate ${NODE}/$version
       fi
       exit
@@ -354,7 +339,7 @@ install() {
   log install ${NODE}-v$version
 
   local url=$(tarball_url $version)
-  is_ok $url || is_oss_ok $url || abort "invalid version $version"
+  is_ok $url || is_oss_ok $url || abort "cannot fetch version $version"
 
   log mkdir $dir
   mkdir -p $dir
@@ -368,12 +353,12 @@ install() {
 
   log fetch $url
   $GET $url | tar -zx --strip-components=1
-  [ $QUIET == false ] && erase_line
+  test $QUIET = false && erase_line
   rm -f $dir/n.lock
 
   disable_pax_mprotect bin/node
 
-  if $ACTIVATE ; then
+  if test $DOWNLOAD = false ; then
     activate ${NODE}/$version
     log installed $(node --version)
   fi
@@ -385,7 +370,7 @@ install() {
 #
 
 set_quiet() {
-  command -v curl > /dev/null && GET="$GET -s" && QUIET=true
+  which curl > /dev/null && GET="$GET -s" && QUIET=true
 }
 
 #
@@ -394,10 +379,10 @@ set_quiet() {
 
 remove_versions() {
   test -z $1 && abort "version(s) required"
-  check_current_version
+  check_current_node_version
   while test $# -ne 0; do
     local version=${1#v}
-    [ "${NODE}/$version" == "$active" ] && abort "cannot remove currently active version ($active)"
+    test "${NODE}/$version" = "$active" && abort "cannot remove currently active version ($active)"
     rm -rf ${NODE_VERSIONS_DIR}/$version
     shift
   done
@@ -415,33 +400,6 @@ display_bin_path_for_version() {
     printf "$bin \n"
   else
     abort "$1 is not installed"
-  fi
-}
-
-#
-# Execute the given <version> of node with [args ...]
-#
-
-execute_with_version() {
-  test -z $1 && abort "version required"
-  local version=${1#v}
-
-  if [ "$version" = "latest" ]; then
-    version=$(display_latest_version)
-  fi
-
-  if [ "$version" = "stable" ]; then
-    version=$(display_latest_stable_version)
-  fi
-
-  local bin=${NODE_VERSIONS_DIR}/$version/bin/node
-
-  shift # remove version
-
-  if test -f $bin; then
-    $bin "$@"
-  else
-    abort "$version is not installed"
   fi
 }
 
@@ -493,10 +451,10 @@ display_latest_lts_version() {
 #
 
 display_remote_versions() {
-  check_current_version
+  check_current_node_version
   local versions=""
   versions=$($GET 2> /dev/null ${NODE_URL} \
-    | egrep "</a>" \
+    | egrep "href" \
     | egrep -o '[0-9]+\.[0-9]+\.[0-9]+' \
     | sort -u -k 1,1n -k 2,2n -k 3,3n -t . \
     | awk '{ print "  " $1 }')
@@ -505,16 +463,43 @@ display_remote_versions() {
   local bin=${NODE}
   for v in $versions; do
     if test "$active" = "$bin/$v"; then
-      printf "  \033[32m\u2713\033[0m [1m$v[m\033[0m\n"
+      printf "  \033[32m+\033[0m [1m$v[m\033[0m\n"
     else
       if test -d $BASE_VERSIONS_DIR/$bin/$v; then
         printf "    $v \033[0m\n"
       else
-        printf "    \e[2m$v\e[22m\n"
+        printf "    \033[2m$v\033[22m\n"
       fi
     fi
   done
   echo
+}
+
+#
+# NodeJs version management
+#
+
+node_command() {
+    if test $# -eq 0; then
+      test -z "$(versions_paths)" && err_no_installed_print_help
+      display_versions
+    else
+        while test $# -ne 0; do
+          case $1 in
+            --latest) display_latest_version; exit ;;
+            --stable) display_latest_stable_version; exit ;;
+            --lts) display_latest_lts_version; exit ;;
+            bin) display_bin_path_for_version $2; exit ;;
+            rm) shift; remove_versions $@; exit ;;
+            latest) install_node $(display_latest_version); exit ;;
+            stable) install_node $(display_latest_stable_version); exit ;;
+            lts) install_node $(display_latest_lts_version); exit ;;
+            list) display_remote_versions; exit ;;
+            *) install_node $1; exit ;;
+          esac
+          shift
+        done
+    fi
 }
 
 #
@@ -530,19 +515,13 @@ else
       -V|--version) display_version ;;
       -h|--help|help) display_help; exit ;;
       -q|--quiet) set_quiet ;;
-      -d|--download) ACTIVATE=false ;;
+      -d|--download) DOWNLOAD=true ;;
       --latest) display_latest_version; exit ;;
       --stable) display_latest_stable_version; exit ;;
       --lts) display_latest_lts_version; exit ;;
       -a|--arch) shift; set_arch $1;; # set arch and continue
-      bin) display_bin_path_for_version $2; exit ;;
-      use) shift; execute_with_version $@; exit ;;
-      rm) shift; remove_versions $@; exit ;;
-      latest) install_latest; exit ;;
-      stable) install_stable; exit ;;
-      lts) install_lts; exit ;;
-      list) display_remote_versions; exit ;;
-      *) install $1; exit ;;
+      node) shift; node_command $@; exit ;;
+      *) abort "not supported yet"; exit ;;
     esac
     shift
   done
