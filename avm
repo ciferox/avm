@@ -8,8 +8,7 @@ VERSION="0.1.1"
 INIT_PREFIX=${INIT_PREFIX-~/.avm}
 N_PREFIX=${N_PREFIX-/usr/local}
 BASE_VERSIONS_DIR=$INIT_PREFIX/versions
-NODE_URL=${NODE_URL-http://adone.io/public/dist/node/}
-NODE_VERSIONS_DIR=$BASE_VERSIONS_DIR/node
+DIST_URL=${DIST_URL-http://adone.io/public/dist/}
 
 log() {
   printf "  \033[32m%10s\033[0m : \033[2m%s\033[22m\033[0m\n" $1 $2
@@ -23,8 +22,12 @@ warning() {
   printf "\n  \033[33mWarning: $@\033[0m\n\n"
 }
 
+info() {
+  printf "\n  \033[36mInfo: $@\033[0m\n\n"
+}
+
 abort() {
-  error "$@" && printf "\n" && exit 1
+  error "$@" && exit 1
 }
 
 notsupported() {
@@ -53,6 +56,7 @@ QUIET=false
 DOWNLOAD=false
 REMOVE_ACTIVE=false
 ARCH=
+CURRENT_SCRIPT=$0
 
 test -d ${BASE_VERSIONS_DIR} || mkdir -p ${BASE_VERSIONS_DIR}
 
@@ -125,10 +129,19 @@ display_version() {
 #
 
 versions_paths() {
-  find $BASE_VERSIONS_DIR -maxdepth 2 -type d \
-  | sed 's|'$BASE_VERSIONS_DIR'/||g' \
-  | egrep "/[0-9]+\.[0-9]+\.[0-9]+$" \
-  | sort -k 1,1 -k 2,2n -k 3,3n -t .
+  local project=$1
+
+  if test "$project" = "avm"; then
+    check_current_version avm
+    echo avm/$active
+  else
+    if test -d $BASE_VERSIONS_DIR/$project; then
+      find $BASE_VERSIONS_DIR/$project -maxdepth 2 -type d \
+      | sed 's|'$BASE_VERSIONS_DIR'/||g' \
+      | egrep "/[0-9]+\.[0-9]+\.[0-9]+$" \
+      | sort -k 1,1 -k 2,2n -k 3,3n -t .
+    fi
+  fi
 }
 
 #
@@ -136,16 +149,15 @@ versions_paths() {
 #
 
 display_versions_with_selected() {
-  selected=$1
-  echo
-  for version in $(versions_paths); do
+  local project=$1
+  local selected=$2
+  for version in $(versions_paths $project); do
     if test "$version" = "$selected"; then
       printf "  \033[32m+\033[0m [1m$version[m\033[0m\n"
     else
       printf "    \033[2m$version\033[22m\n"
     fi
   done
-  echo
 }
 
 #
@@ -153,7 +165,7 @@ display_versions_with_selected() {
 #
 
 list_versions_installed() {
-  for version in $(versions_paths); do
+  for version in $(versions_paths $1); do
     echo $version
   done
 }
@@ -233,22 +245,38 @@ set_quiet() {
 # Check root access
 #
 
-check_root() {
-  test `id -u` -eq 0
+need_root() {
+  test `id -u` -eq 0 || abort "root access required"
 }
 
 #
 # Check for installed node version, and populate $active
 #
 
-check_current_node_version() {
-  if which node > /dev/null; then
-    local current=$(node --version)
-    current=${current#v}
-    if cmp -s \
-    $BASE_VERSIONS_DIR/node/$current/bin/node \
-    `which node` ; then
-      active=$current
+check_current_version() {
+  local project=$1
+  active=
+  if test "$project" = "node"; then
+    if which node > /dev/null; then
+      local current=$(node --version)
+      current=${current#v}
+      if cmp -s \
+      $BASE_VERSIONS_DIR/node/$current/bin/node \
+      `which node` ; then
+        active=$current
+      fi
+    fi
+  elif test "$project" = "avm"; then
+    if test -x $N_PREFIX/bin/avm; then
+      if test -n "$(cat $N_PREFIX/bin/avm | head -n 4 | tail -n 1 | grep "Adone init script")"; then
+        active=$($N_PREFIX/bin/avm -V)
+      else
+        active="ANOTHER_SCRIPT"
+      fi
+    fi
+  elif test "$project" = "adone"; then
+    if which adone > /dev/null; then
+      active=$(adone --version)
     fi
   fi
 }
@@ -258,16 +286,26 @@ check_current_node_version() {
 #
 
 display_versions() {
-  check_current_node_version
-  display_versions_with_selected $active
+  local project=$1
+  if test -z "$project"; then
+    display_versions avm
+    echo
+    display_versions node
+    echo
+    display_versions adone
+  else
+    check_current_version $project
+    display_versions_with_selected $project $project/$active
+  fi
 }
 
 #
 # Determine node tarball url for <version>
 #
 
-node_tarball_url() {
-  local version=$1
+tarball_url() {
+  local project=$1
+  local version=$2
   local uname="$(uname -a)"
   local arch=x86
   local os=
@@ -293,7 +331,7 @@ node_tarball_url() {
 
   test -n "$ARCH" && arch=$ARCH
 
-  echo "${NODE_URL}${version}/${os}-${arch}.tar.gz"
+  echo "${DIST_URL}$project/${version}/${os}-${arch}.tar.gz"
 
 }
 
@@ -301,43 +339,133 @@ node_tarball_url() {
 # Activate node <version>
 #
 
-activate_node() {
-  local version=$1
-  check_current_node_version
+activate() {
+  local project=$1
+  local version=$2
+  check_current_version $project
   if test "$version" != "$active"; then
-    local dir=$NODE_VERSIONS_DIR/$version
-    for subdir in bin lib include share; do
-      if test -L "$N_PREFIX/$subdir"; then
-        find "$dir/$subdir" -mindepth 1 -maxdepth 1 -exec cp -fR "{}" "$N_PREFIX/$subdir" \;
-      else
-        cp -fR "$dir/$subdir" $N_PREFIX
-      fi
-    done
-    disable_pax_mprotect "$N_PREFIX/bin/node"
-    log activated node-v$version
+    if test "$project" = "node"; then
+      local dir=$BASE_VERSIONS_DIR/$project/$version
+      for subdir in bin lib include share; do
+        if test -L "$N_PREFIX/$subdir"; then
+          find "$dir/$subdir" -mindepth 1 -maxdepth 1 -exec cp -fR "{}" "$N_PREFIX/$subdir" \;
+        else
+          cp -fR "$dir/$subdir" $N_PREFIX
+        fi
+      done
+      disable_pax_mprotect "$N_PREFIX/bin/node"
+      log activated node-v$version
+    else
+      node $BASE_VERSIONS_DIR/adone/$version/bin/adone global
+    fi
   else
-    warning "Node $version is already active"
+    warning "$project $version is already active"
   fi
 }
 
 #
-# Install node <version>
+# Get later version
 #
 
-install_node() {
-  check_root || abort "root access required"
+get_later_version() {
+  local vs=
+  vs=$(echo "$@" | sed "s/ /\n/g")
+  echo "$vs" | sort -k 1,1n -k 2,2n -k 3,3n | tail -n 1
+}
 
-  test -d ${NODE_VERSIONS_DIR} || mkdir -p ${NODE_VERSIONS_DIR}
+#
+# Install this version of avm globally
+#
 
-  local version=${1#v}
+install_this_avm() {
+  need_root
+  check_current_version avm
+  if test "$active" = "ANOTHER_SCRIPT"; then
+    abort "there is another script in $N_PREFIX/bin/avm. Please delete it and repeat."
+  elif test "$active" = "$VERSION"; then
+    info "version of globally installed AVM is identical to this script version"
+  elif test -z "$active" || test $(get_later_version $active $VERSION) = "$VERSION"; then
+    cp $CURRENT_SCRIPT $N_PREFIX/bin/avm
+    chmod +x $N_PREFIX/bin/avm
+    echo
+    log installed "avm/$VERSION"
+    echo
+  else
+    info "version of globally installed AVM ($active) is newer then this script version ($latest)."
+  fi
+}
+
+#
+# Update avm globally
+#
+
+update_avm() {
+  need_root
+  check_current_version avm
+
+  local latest=$(display_latest_version avm)
+
+  if test "$active" = "ANOTHER_SCRIPT"; then
+    abort "there is another script in $N_PREFIX/bin/avm. Please delete it and repeat."
+  elif test "$active" = "$latest"; then
+    info "AVM is up to date"
+  elif test -z "$active" || test $(get_later_version $active $latest) = "$latest"; then
+    if test $(get_later_version $VERSION $latest) = $VERSION; then
+      abort "local version ($VERSION) is newer than remote version ($latest). Use 'avm install' instead."
+    fi
+    $GET $DIST_URL/avm/$latest/avm.sh > $N_PREFIX/bin/avm
+    test $QUIET = false && erase_line
+    chmod +x $N_PREFIX/bin/avm
+    echo
+    log installed "avm/$latest"
+    echo
+  else
+    info "version of globally installed AVM ($active) is newer than remote version ($latest)."
+  fi
+}
+
+#
+# Uninstall globally installed avm
+#
+
+uninstall_avm() {
+  need_root
+  check_current_version avm
+
+  if test "$active" = "ANOTHER_SCRIPT"; then
+    abort "there is another script in $N_PREFIX/bin/avm. Cannot delete it."
+  elif test -n "$active"; then
+    rm $N_PREFIX/bin/avm
+    log uninstalled "avm/$active"
+  else
+    abort "AVM is not installed globally"
+  fi
+}
+
+#
+# Install project <version>
+#
+
+install() {
+  need_root
+
+  local project=$1
+  local version=${2#v}
+
+  test -d ${BASE_VERSIONS_DIR}/$project || mkdir -p ${BASE_VERSIONS_DIR}/$project
+
+  if test "$project" = "adone"; then
+    check_current_version node
+    if test -z "$active"; then
+      abort "adone require node to be installed. Execute 'avm node latest'"
+    fi
+  fi
 
   local dots=$(echo $version | sed 's/[^.]*//g')
   if test ${#dots} -lt 2; then
-    version=$($GET 2> /dev/null ${NODE_URL} \
+    version=$($GET 2> /dev/null ${DIST_URL}/$project \
       | egrep "</a>" \
       | egrep -o '[0-9]+\.[0-9]+\.[0-9]+' \
-      | egrep -v '^0\.[0-7]\.' \
-      | egrep -v '^0\.8\.[0-5]$' \
       | sort -u -k 1,1n -k 2,2n -k 3,3n -t . \
       | egrep ^$version \
       | tail -n1)
@@ -345,22 +473,22 @@ install_node() {
     test $version || abort_help "invalid version ${1#v}"
   fi
 
-  local dir=${NODE_VERSIONS_DIR}/$version
+  local dir=${BASE_VERSIONS_DIR}/$project/$version
 
   if test -d $dir; then
     if test ! -e $dir/n.lock; then
       if test $DOWNLOAD = false ; then
-        activate_node $version
+        activate $project $version
       fi
       exit
     fi
   fi
 
   echo
-  log install node-v$version
+  log install $project-v$version
 
-  local url=$(node_tarball_url $version)
-  is_ok $url || is_oss_ok $url || abort "cannot fetch version $version"
+  local url=$(tarball_url $project $version)
+  is_ok $url || is_oss_ok $url || abort "cannot fetch $project v$version"
 
   log mkdir $dir
   mkdir -p $dir
@@ -377,11 +505,11 @@ install_node() {
   test $QUIET = false && erase_line
   rm -f $dir/n.lock
 
-  disable_pax_mprotect bin/node
+  disable_pax_mprotect project/node
 
   if test $DOWNLOAD = false ; then
-    activate_node $version
-    log installed node-$(node --version)
+    activate $project $version
+    log installed $project-v$version
   fi
   echo
 }
@@ -391,53 +519,72 @@ install_node() {
 #
 
 remove_node_active() {
-  check_root || abort "root access required"
+  need_root
 
-  for f in `find ${NODE_VERSIONS_DIR}/$active -mindepth 2 ! -type d | sort -r`; do
-    rm "$N_PREFIX${f#${NODE_VERSIONS_DIR}/$active}"
+  for f in `find ${BASE_VERSIONS_DIR}/node/$active -mindepth 2 ! -type d | sort -r`; do
+    rm "$N_PREFIX${f#${BASE_VERSIONS_DIR}/node/$active}"
   done
 
-  for d in `find ${NODE_VERSIONS_DIR}/$active -mindepth 2 -type d | sort -r`; do
-    rmdir "$N_PREFIX${d#${NODE_VERSIONS_DIR}/$active}" > /dev/null
+  for d in `find ${BASE_VERSIONS_DIR}/node/$active -mindepth 2 -type d | sort -r`; do
+    rmdir "$N_PREFIX${d#${BASE_VERSIONS_DIR}/node/$active}" > /dev/null
   done
 }
 
 #
-# Remove node <version ...>
+# Remove active adone
 #
 
-remove_node_versions() {
+remove_adone_active() {
+  need_root
+
+  adone global --remove
+}
+
+#
+# Remove project <version ...>
+#
+
+remove_versions() {
+  local project=$1
+  shift;
+
   if test $1 = "--active"; then
     REMOVE_ACTIVE=true
     shift
   fi
 
   test -z $1 && abort_help "version(s) required"
-  check_current_node_version
+  check_current_version $project
   while test $# -ne 0; do
     local version=${1#v}
-    test -d ${NODE_VERSIONS_DIR}/$version || abort_help "Node version $version is not installed"
+    test -d ${BASE_VERSIONS_DIR}/$project/$version || abort_help "$project version $version is not installed"
     if test "$version" = "$active"; then
       if test $REMOVE_ACTIVE = true; then
-        remove_node_active
+        if test $project = "node"; then
+          remove_node_active
+        elif test $project = "adone"; then
+          remove_adone_active
+        else
+          notsupported
+        fi
       else
-        abort_help "Cannot remove currently active version ($active).\n         Specify --active option to force removing."
+        abort_help "Cannot remove currently active $project version ($active).\n         Specify --active option to force removing."
       fi
     fi
-    rm -rf ${NODE_VERSIONS_DIR}/$version
+    rm -rf ${BASE_VERSIONS_DIR}/$project/$version
     log removed $version
     shift
   done
 }
 
 #
-# Output bin path for <version>
+# Output bin path for node <version>
 #
 
 display_bin_path_for_version() {
   test -z $1 && abort "version required"
   local version=${1#v}
-  local bin=${NODE_VERSIONS_DIR}/$version/bin/node
+  local bin=${BASE_VERSIONS_DIR}/node/$version/bin/node
   if test -f $bin; then
     printf "$bin \n"
   else
@@ -450,11 +597,9 @@ display_bin_path_for_version() {
 #
 
 display_latest_version() {
-  $GET 2> /dev/null ${NODE_URL} \
-  | egrep "</a>" \
+  $GET 2> /dev/null ${DIST_URL}/$1 \
+  | egrep "href" \
   | egrep -o '[0-9]+\.[0-9]+\.[0-9]+' \
-  | egrep -v '^0\.[0-7]\.' \
-  | egrep -v '^0\.8\.[0-5]$' \
   | sort -u -k 1,1n -k 2,2n -k 3,3n -t . \
   | tail -n1
 }
@@ -464,8 +609,8 @@ display_latest_version() {
 #
 
 display_latest_stable_version() {
-  $GET 2> /dev/null ${NODE_URL} \
-  | egrep "</a>" \
+  $GET 2> /dev/null ${DIST_URL}/$1 \
+  | egrep "href" \
   | egrep -o '[0-9]+\.[0-9]*[02468]\.[0-9]+' \
   | sort -u -k 1,1n -k 2,2n -k 3,3n -t . \
   | tail -n1
@@ -476,14 +621,16 @@ display_latest_stable_version() {
 #
 
 display_latest_lts_version() {
-  local folder_name=$($GET 2> /dev/null ${NODE_URL} \
-    | egrep "</a>" \
+  local project=$1
+
+  local folder_name=$($GET 2> /dev/null ${DIST_URL}/$project \
+    | egrep "href" \
     | egrep -o 'latest-[a-z]{2,}' \
     | sort \
   | tail -n1)
 
-  $GET 2> /dev/null ${NODE_URL}/$folder_name/ \
-  | egrep "</a>" \
+  $GET 2> /dev/null ${DIST_URL}/$project/$folder_name/ \
+  | egrep "href" \
   | egrep -o '[0-9]+\.[0-9]+\.[0-9]+' \
   | head -n1
 }
@@ -493,28 +640,26 @@ display_latest_lts_version() {
 #
 
 display_remote_versions() {
-  check_current_node_version
+  local project=$1
+  check_current_version $project
   local versions=""
-  versions=$($GET 2> /dev/null ${NODE_URL} \
+  versions=$($GET 2> /dev/null ${DIST_URL}/$project \
     | egrep "href" \
     | egrep -o '[0-9]+\.[0-9]+\.[0-9]+' \
     | sort -u -k 1,1n -k 2,2n -k 3,3n -t . \
-  | awk '{ print "  " $1 }')
+    | awk '{ print "  " $1 }')
 
-  echo
-  local bin=${NODE}
   for v in $versions; do
-    if test "$active" = "$bin/$v"; then
-      printf "  \033[32m+\033[0m [1m$v[m\033[0m\n"
+    if test "$active" = "$v"; then
+      printf "  \033[32m+\033[0m [1m$project/$v[m\033[0m\n"
     else
-      if test -d $BASE_VERSIONS_DIR/$bin/$v; then
-        printf "    $v \033[0m\n"
+      if test -d $BASE_VERSIONS_DIR/$project/$v; then
+        printf "    $project/$v \033[0m\n"
       else
-        printf "    \033[2m$v\033[22m\n"
+        printf "    \033[2m$project/$v\033[22m\n"
       fi
     fi
   done
-  echo
 }
 
 #
@@ -523,21 +668,21 @@ display_remote_versions() {
 
 node_command() {
   if test $# -eq 0; then
-    test -z "$(versions_paths)" && abort_help "no installed versions"
-    display_versions
+    test -z "$(versions_paths node)" && abort_help "no installed versions"
+    echo && display_versions node && echo
   else
     while test $# -ne 0; do
       case $1 in
-        --latest) display_latest_version; exit ;;
-        --stable) display_latest_stable_version; exit ;;
-        --lts) display_latest_lts_version; exit ;;
+        --latest) display_latest_version node; exit ;;
+        --stable) display_latest_stable_version node; exit ;;
+        --lts) display_latest_lts_version node; exit ;;
         bin) display_bin_path_for_version $2; exit ;;
-        rm) shift; remove_node_versions $@; exit ;;
-        latest) install_node $(display_latest_version); exit ;;
-        stable) install_node $(display_latest_stable_version); exit ;;
-        lts) install_node $(display_latest_lts_version); exit ;;
-        list) display_remote_versions; exit ;;
-        *) install_node $1; exit ;;
+        rm) shift; remove_versions node $@; exit ;;
+        latest) install node $(display_latest_version node); exit ;;
+        stable) install node $(display_latest_stable_version node); exit ;;
+        lts) install node $(display_latest_lts_version node); exit ;;
+        list) echo && display_remote_versions node && echo; exit ;;
+        *) install node $1; exit ;;
       esac
       shift
     done
@@ -549,8 +694,8 @@ node_command() {
 #
 
 if test $# -eq 0; then
-  test -z "$(versions_paths)" && abort_help "no installed versions"
-  display_versions
+  test -z "$(versions_paths)" && exit
+  echo && display_versions && echo
 else
   while test $# -ne 0; do
     case $1 in
@@ -560,7 +705,12 @@ else
       -d|--download) DOWNLOAD=true ;;
       -a|--arch) shift; set_arch $1;;
       node) shift; node_command $@; exit ;;
-      *) notsupported; exit ;;
+      install) install_this_avm; exit ;;
+      uninstall) uninstall_avm; exit ;;
+      update) update_avm; exit ;;
+      list) echo && display_remote_versions adone && echo; exit ;;
+      rm) shift; remove_versions adone $@; exit ;;
+      *) install adone $1 ;;
     esac
     shift
   done
