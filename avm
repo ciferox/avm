@@ -234,10 +234,6 @@ check_current_version() {
 }
 
 activate() {
-    if ! is_root_user; then
-        log "activate" "need root permissions"
-        exit 1
-    fi
     local version=$(resolve_version $1)
     local current=$(check_current_version)
 
@@ -245,6 +241,10 @@ activate() {
         local dir=$VERSIONS_DIR/$BIN/$version
         if ! test -e $dir; then
             log "activate" "no such version"
+            exit 1
+        fi
+        if ! is_root_user; then
+            log "activate" "need root permissions"
             exit 1
         fi
         log "activate" "$version"
@@ -339,10 +339,31 @@ install() {
 
     if ! test -e $dir; then
         log "install" "$resolved"
-        local url=$(tarballurl $version)
+        local path=$(tarballpath $version)
 
-        if ! is_ok $url; then
-            log "fetch" "cannot find $url"
+        case $BIN in
+            node)
+                # check nodejs.org first
+                urls=("https://nodejs.org/dist$path" "$MIRROR$path")
+            ;;
+            adone)
+                urls=("$MIRROR$path")
+            ;;
+        esac
+
+        local url
+
+        for i in ${urls[@]}; do
+            if is_ok $i; then
+                url=$i
+                break
+            else
+                log "fetch" "cannot find $i"
+            fi
+        done
+
+        if test -z $url; then
+            log "fetch" "cannot find any tarball"
             exit 1
         fi
 
@@ -418,7 +439,7 @@ remove_version() {
     fi
 }
 
-tarballurl() {
+tarballpath() {
     local version=$1
 
     local arch=x86
@@ -458,7 +479,7 @@ tarballurl() {
         ;;
     esac
 
-    echo $MIRROR/$version/$BIN-v$resolved-$os-$arch.tar.gz
+    echo /$version/$BIN-v$resolved-$os-$arch.tar.gz
 }
 
 set_node() {
