@@ -446,6 +446,8 @@ tarballurl() {
 
     [ ! -z $ARCH ] && arch=$ARCH
 
+    local resolved=$(resolve_version $version)
+
     case $version in
         latest)
         ;;
@@ -456,7 +458,7 @@ tarballurl() {
         ;;
     esac
 
-    echo $MIRROR/$version/$BIN-v$(resolve_version $version)-$os-$arch.tar.gz
+    echo $MIRROR/$version/$BIN-v$resolved-$os-$arch.tar.gz
 }
 
 set_node() {
