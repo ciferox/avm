@@ -5,20 +5,55 @@
 #
 
 VERSION="0.0.1"
+INSTALLED_AVM_BIN=/usr/local/bin/avm
 
-is_globally_installed() {
-    which avm 1>/dev/null
+check_installed_avm() {
+    if test -e $INSTALLED_AVM_BIN; then
+        if ! test -f $INSTALLED_AVM_BIN; then
+            # something exists, and this is not a file at all
+            echo "NOT_A_FILE"
+            exit
+        fi
+        # something exists, maybe this is not avm
+        if test -z "$(cat $INSTALLED_AVM_BIN | head -n 4 | tail -n 1 | grep "Adone and Node version managing script")"; then
+            echo "ANOTHER_SCRIPT"
+            exit
+        fi
+        echo "OK"
+    else
+        echo "DOESNT_EXIST"
+    fi
+}
+
+is_avm_globally_installed() {
+    test $(check_installed_avm) = "OK"
+}
+
+log() {
+    case $# in
+        1) printf "  \033[36m%10s\033[0m   \033[2m%s\033[22m\033[0m\n" "" "$1" ;;
+        2) printf "  \033[36m%10s\033[0m : \033[2m%s\033[22m\033[0m\n" "$1" "$2" ;;
+        3) printf "  \033[36m%10s\033[0m : \033[2m%s\033[22m\033[0m \033[2m%s\033[22m\033[0m\n" "$1" "$2" "$3" ;;
+    esac
 }
 
 if test -z $AVM_PREFIX; then
-    if is_globally_installed; then
-        AVM_PREFIX=/usr/local/lib/
+    if is_avm_globally_installed; then
+        AVM_PREFIX=/usr/local/lib
+        AVM_DIR=$AVM_PREFIX/avm
     else
         AVM_PREFIX=$(pwd)
+        AVM_DIR=$AVM_PREFIX/.avm
     fi
+else
+    AVM_DIR=$AVM_PREFIX/.avm
 fi
 
-AVM_DIR=$AVM_PREFIX/avm
+if test -e $AVM_DIR && ! test -d $AVM_DIR; then
+    log "error" "$AVM_DIR is not a directory"
+    exit 1
+fi
+
 VERSIONS_DIR=$AVM_DIR/versions
 AVM_MIRROR=${AVM_MIRROR-https://adone.io}/dist
 NODE_MIRROR=$AVM_MIRROR/node
@@ -37,23 +72,17 @@ WGET_PARAMS=( "--no-check-certificate"
               "-q"
               "-O-" )
 
-command -v wget > /dev/null && GET="wget ${WGET_PARAMS[@]}"
+FETCH_BIN=
 
-command -v curl > /dev/null && GET="curl ${CURL_PARAMS[@]}"
+command -v wget > /dev/null && GET="wget ${WGET_PARAMS[@]}" && FETCH_BIN="wget"
+
+command -v curl > /dev/null && GET="curl ${CURL_PARAMS[@]}" && FETCH_BIN="curl"
 
 
 test -z "$GET" && echo "curl or wget required" && exit 1
 
 display_avm_version() {
     echo $VERSION && exit 0
-}
-
-log() {
-    case $# in
-        1) printf "  \033[36m%10s\033[0m   \033[2m%s\033[22m\033[0m\n" "" "$1" ;;
-        2) printf "  \033[36m%10s\033[0m : \033[2m%s\033[22m\033[0m\n" "$1" "$2" ;;
-        3) printf "  \033[36m%10s\033[0m : \033[2m%s\033[22m\033[0m \033[2m%s\033[22m\033[0m\n" "$1" "$2" "$3" ;;
-    esac
 }
 
 erase_line() {
@@ -255,6 +284,17 @@ real_user_name() {
 
 install_avm() {
     log "avm" "installing"
+    local current_avm=$(check_installed_avm)
+    case $current_avm in
+        NOT_A_FILE)
+            log "avm" "there is something in $INSTALLED_AVM_BIN, please check it and try again"
+            exit 1
+        ;;
+        ANOTHER_SCRIPT)
+            log "avm" "there is another script in $INSTALLED_AVM_BIN, please check it and try again"
+            exit 1
+        ;;
+    esac
     if ! is_root_user; then
         log "avm" "need root permissions"
         exit 1
@@ -266,12 +306,23 @@ install_avm() {
     log "avm" "done"
 }
 
+is_ok() {
+    case $FETCH_BIN in
+        curl)
+            $GET -Is $1 | head -n 1 | grep 200 > /dev/null
+        ;;
+        wget)
+            $GET -S --spider 2>&1 $1 | head -n 1 | grep 200 > /dev/null
+        ;;
+    esac
+}
+
 install() {
     if test -z $BIN; then
         install_avm
         exit
     fi
-    if is_globally_installed && ! is_root_user; then
+    if is_avm_globally_installed && ! is_root_user; then
         log "install" "need root permissions"
         exit
     fi
@@ -289,6 +340,12 @@ install() {
     if ! test -e $dir; then
         log "install" "$resolved"
         local url=$(tarballurl $version)
+
+        if ! is_ok $url; then
+            log "fetch" "cannot find $url"
+            exit 1
+        fi
+
         mkdir -p $dir
         cd $dir
         log "fetch" "$url"
@@ -312,12 +369,31 @@ install() {
 }
 
 remove_avm() {
+    local current_avm=$(check_installed_avm)
+    case $current_avm in
+        NOT_A_FILE)
+            log "avm" "there is something in $INSTALLED_AVM_BIN, please check it and try again"
+            exit 1
+        ;;
+        ANOTHER_SCRIPT)
+            log "avm" "there is another script in $INSTALLED_AVM_BIN, please check it and try again"
+            exit 1
+        ;;
+        DOESNT_EXIST)
+            log "avm" "is not installed"
+            exit
+        ;;
+    esac
+    log "avm" "uninstalling"
     if ! is_root_user; then
         log "avm" "need root permissions"
         exit 1
     fi
+    log "avm" "remove avm binary"
     rm /usr/local/bin/avm
+    log "avm" "remove avm library"
     rm -r /usr/local/lib/avm
+    log "avm" "done"
 }
 
 remove_version() {
@@ -370,7 +446,17 @@ tarballurl() {
 
     [ ! -z $ARCH ] && arch=$ARCH
 
-    echo $MIRROR/$version/$BIN-$(resolve_version $version)-$os-$arch.tar.gz
+    case $version in
+        latest)
+        ;;
+        stable)
+        ;;
+        *)
+            version="v$version"
+        ;;
+    esac
+
+    echo $MIRROR/$version/$BIN-v$(resolve_version $version)-$os-$arch.tar.gz
 }
 
 set_node() {
@@ -404,6 +490,7 @@ display_help() {
   Usage: avm [options] [COMMAND] [args]
 
   avm install                         Install avm
+  avm update                          Actually, the same as install
   avm rm                              Remove avm
   avm [--clean] bootstrap             Install latest node.js and adone versions
 
@@ -412,6 +499,7 @@ display_help() {
     avm node ls-remote                Display available to install node.js versions
     avm node latest                   Display latest node.js version
     avm node stable                   Display stable node.js version
+    avm node update                   The same as install latest
     avm node [--download] install <version>
                                       Install node.js version
     avm node activate <version>       Activate node.js version
@@ -422,6 +510,7 @@ display_help() {
     avm adone ls-remote               Display available to install adone versions
     avm adone latest                  Display latest adone version
     avm adone stable                  Display stable adone version
+    avm adone update                  The same as install latest
     avm adone [--download] install <version>
                                       Install adone version
     avm adone activate <version>      Activate adone version
@@ -431,7 +520,7 @@ display_help() {
 
     -V, --version   Output current version of avm
     -h, --help      Display this help information
-    -d, --download  Activate after download
+    -d, --download  Only download
     -c, --clean     Remove avm directory
 
 EOF
@@ -460,6 +549,7 @@ else
       rm) shift; remove_version $1; exit ;;
       bootstrap) bootstrap; exit ;;
       -c|--clean) CLEAN=true ;;
+      update) install latest; exit ;;
     esac
     shift
   done
