@@ -482,6 +482,26 @@ tarballpath() {
     echo /$version/$BIN-v$resolved-$os-$arch.tar.gz
 }
 
+srcpath() {
+    local version=$1
+    local arch=x86
+    local uname=$(uname -a)
+
+    local resolved=$(resolve_version $version)
+
+    case $version in
+        latest)
+        ;;
+        stable)
+        ;;
+        *)
+            version="v$version"
+        ;;
+    esac
+
+    echo /$version/$BIN-v$resolved.tar.gz
+}
+
 set_node() {
     BIN="node"
     MIRROR=$NODE_MIRROR
@@ -507,6 +527,101 @@ bootstrap() {
     log "avm" "done"
 }
 
+BUILD=
+USER=
+PASS=
+
+build_node() {
+    if test $BIN != "node"; then
+        log "build" "available only for node"
+        exit 1
+    fi
+    local version=$1
+    if test -z $version; then
+        log "build" "version is required"
+        exit 1
+    fi
+    if test -z $BUILD && ( test -z $USER || test -z $PASS ); then
+        log "build" "username and password is required for uploading"
+        exit 1
+    fi
+    local resolved=$(resolve_version $1)
+    log "build" "$resolved"
+
+    local path=$(srcpath $version)
+    local url="https://nodejs.org/dist$path"
+
+    if ! is_ok $url; then
+        log "fetch" "cannot find $url"
+        exit 1
+    fi
+
+    local tmpdir=$(mktemp -d)
+    log "build" "cd to $tmpdir"
+    cd $tmpdir
+
+    log "fetch" "$url"
+    $GET $url | tar -zxf /dev/stdin --strip-components=1
+    erase_line
+
+    log "build" "start in 5 seconds"
+    sleep 5
+
+    ./configure
+    make binary
+
+    log "build" "finished"
+
+    cd /tmp/tmp.XMTCvqXYJP
+
+    if ! test -z $BUILD; then
+        log "build" "just build, as requested"
+        log "build" "tmp dir is $tmpdir"
+        exit
+    fi
+
+    local arch=x86
+    local uname=$(uname -a)
+    local os
+
+    case $uname in
+        Linux*) os=linux ;;
+        Darwin*) os=darwin ;;
+        SunOS*) os=sunos ;;
+        FreeBSD*) os=freebsd ;;
+    esac
+
+    case $uname in
+        *x86_64*|*amd64*) arch=x64 ;;
+        *armv6l*) arch=armv6l ;;
+        *armv7l*) arch=armv7l ;;
+    esac
+
+    case $version in
+        latest)
+        ;;
+        stable)
+        ;;
+        *)
+            version="v$version"
+        ;;
+    esac
+
+    for file in node*tar*; do
+        local archive_type=${file: -2}
+        log "build" "upload $file to $AVM_MIRROR"
+        curl -# -s --data-binary @$file -X POST -u $USER:$PASS "$AVM_MIRROR/?os=$os&arch=$arch&type=$archive_type&version=$resolved&subject=node&build=$version" > /dev/null
+    done;
+
+    log "build" "uploaded"
+
+    log "build" "remove tmp directory"
+
+    rm -r $tmpdir
+
+    log "build" "done"
+}
+
 display_help() {
   cat <<-EOF
 
@@ -527,7 +642,9 @@ display_help() {
                                       Install node.js version
     avm node activate <version>       Activate node.js version
     avm node rm <version>             Remove node.js version
-
+    avm node [--build] build <version>
+             [--user user]            Build node.js version from sources and upload it to adone.io
+             [--pass pass]
   Adone management:
     avm adone ls                      Display installed adone versions
     avm adone ls-remote               Display available to install adone versions
@@ -545,6 +662,9 @@ display_help() {
     -h, --help      Display this help information
     -d, --download  Only download
     -c, --clean     Remove avm directory
+    -b, --build     Just build, do not upload
+    --user          Username to upload
+    --pass          Password to upload
 
 EOF
 }
@@ -573,6 +693,10 @@ else
       bootstrap) bootstrap; exit ;;
       -c|--clean) CLEAN=true ;;
       update) install latest; exit ;;
+      build) shift; build_node $1; exit ;;
+      --build) BUILD=true ;;
+      --user) shift; USER=$1 ;;
+      --pass) shift; PASS=$1 ;;
     esac
     shift
   done
