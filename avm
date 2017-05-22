@@ -567,12 +567,14 @@ build_node() {
     log "build" "start in 5 seconds"
     sleep 5
 
-    ./configure
     make binary
 
-    log "build" "finished"
+    if test $? -ne 0; then
+        log "build" "make binary failed"
+        exit 1
+    fi
 
-    cd /tmp/tmp.XMTCvqXYJP
+    log "build" "finished"
 
     if ! test -z $BUILD; then
         log "build" "just build, as requested"
