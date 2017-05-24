@@ -458,13 +458,6 @@ tarballpath() {
         *armv7l*) arch=armv7l ;;
     esac
 
-    # if [ ${arch} = "armv6l" -a ${BIN_NAME[$DEFAULT]} = node ]; then
-    #     local semver=${version//./ }
-    #     local major=$(echo $semver | grep -o -E '[0-9]+' | head -1 | sed -e 's/^0\+//')
-    #     local minor=$(echo $semver | awk '{print $2}' | grep -o -E '[0-9]+' | head -1 | sed -e 's/^0\+//')
-    #     [[ $major -eq "" && $minor -lt 12 ]] && arch=arm-pi
-    # fi
-
     [ ! -z $ARCH ] && arch=$ARCH
 
     local resolved=$(resolve_version $version)
@@ -658,6 +651,12 @@ display_help() {
     avm adone activate <version>      Activate adone version
     avm adone rm <version>            Remove adone version
 
+  Adone dependencies:
+    avm deps                          List all the dependencies
+    avm deps install                  Install all the dependencies
+    avm deps install <package> [<package> ...]
+                                      Install particular dependencies
+
   Options:
 
     -V, --version   Output current version of avm
@@ -665,10 +664,91 @@ display_help() {
     -d, --download  Only download
     -c, --clean     Remove avm directory
     -b, --build     Just build, do not upload
-    --user          Username to upload
-    --pass          Password to upload
+    --user          Username for uploading
+    --pass          Password for uploading
 
 EOF
+}
+
+list_deps_packages() {
+    cat <<-EOF
+    libpcap-dev
+    libusb-1.0.0-dev
+EOF
+}
+
+install_libusb() {
+    local kernel=$(uname -s)
+    local node=$(uname -n)
+    case $kernel in
+        Linux)
+            apt-get -y install libusb-1.0.0-dev
+        ;;
+        FreeBSD)
+            # no need
+        ;;
+        *)
+            log "libusb" "cannot install on $kernel"
+            exit 1
+        ;;
+    esac
+}
+
+install_libpcap() {
+    local kernel=$(uname -s)
+    case $kernel in
+        Linux)
+            apt-get -y install libpcap-dev
+        ;;
+        FreeBSD)
+            # no need
+        ;;
+        *)
+            log "libpcap" "cannot install on $kernel"
+            exit 1
+        ;;
+    esac
+}
+
+deps_install() {
+    local deps=$(list_deps_packages | sed 's/-/ /' | awk '{ print $1 }')
+    if test $# -eq 0; then
+        deps_install ${deps[@]}
+        exit
+    fi
+    if ! is_root_user; then
+        log "deps" "need root permissions"
+        exit 1
+    fi
+    for dep in $@; do
+        log "deps" "install $dep"
+        case $dep in
+            libusb) install_libusb ;;
+            libpcap) install_libpcap ;;
+        esac
+        if test $? -ne 0; then
+            log "deps" "installing of $dep failed"
+            exit 1
+        else
+            log "deps" "$dep done"
+        fi
+    done
+}
+
+deps_handler() {
+    if test $# -eq 0; then
+        for i in $(list_deps_packages); do
+            log $(echo $i | sed 's/-/ /')
+        done
+        exit
+    fi
+    while test $# -ne 0; do
+        case $1 in
+            install) shift; deps_install $@; exit ;;
+            *) exit ;;
+        esac
+        shift;
+    done
 }
 
 #
@@ -699,6 +779,7 @@ else
       --build) BUILD=true ;;
       --user) shift; USER=$1 ;;
       --pass) shift; PASS=$1 ;;
+      deps) shift; deps_handler $@; exit ;;
     esac
     shift
   done
