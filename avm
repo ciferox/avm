@@ -318,10 +318,6 @@ is_ok() {
 }
 
 install() {
-    if test -z $BIN; then
-        install_avm
-        exit
-    fi
     if is_avm_globally_installed && ! is_root_user; then
         log "install" "need root permissions"
         exit
@@ -418,10 +414,6 @@ remove_avm() {
 }
 
 remove_version() {
-    if test -z $BIN; then
-        remove_avm
-        exit
-    fi
     local version=$1
     local resolved=$(resolve_version $version)
     local current=$(check_current_version)
@@ -735,7 +727,7 @@ deps_install() {
     done
 }
 
-deps_handler() {
+deps_arguments_handler() {
     if test $# -eq 0; then
         for i in $(list_deps_packages); do
             log $(echo $i | sed 's/-/ /')
@@ -751,36 +743,77 @@ deps_handler() {
     done
 }
 
-#
-# Handle arguments.
-#
+node_arguments_handler() {
+    if test $# -eq 0; then
+        log "node" "command required"  # print installed versions?
+        exit 1
+    fi
 
-if test $# -eq 0; then
-    display_installed_versions
-else
-  while test $# -ne 0; do
-    case $1 in
-      -h|--help) display_help; exit ;;
-      node) set_node ;;
-      adone) set_adone ;;
-      -V|--version) display_avm_version; exit ;;
-      -d|--download) ACTIVATE=false ;;
-      ls) display_installed_versions; exit ;;
-      ls-remote) display_remote_versions; exit ;;
-      latest) display_latest_version; exit ;;
-      stable) display_stable_version; exit ;;
-      install) shift; install $1; exit ;;
-      activate) shift; activate $1; exit ;;
-      rm) shift; remove_version $1; exit ;;
-      bootstrap) bootstrap; exit ;;
-      -c|--clean) CLEAN=true ;;
-      update) install latest; exit ;;
-      build) shift; build_node $1; exit ;;
-      --build) BUILD=true ;;
-      --user) shift; USER=$1 ;;
-      --pass) shift; PASS=$1 ;;
-      deps) shift; deps_handler $@; exit ;;
-    esac
-    shift
-  done
-fi
+    while test $# -ne 0; do
+        case $1 in
+            -d|--download) ACTIVATE=false ;;
+            install) shift; install $1; exit ;;
+            ls) display_installed_versions; exit ;;
+            ls-remote) display_remote_versions; exit ;;
+            latest) display_latest_version; exit ;;
+            stable) display_stable_version; exit ;;
+            activate) shift; activate $1; exit ;;
+            update) shift; install latest; exit ;;
+            rm) shift; remove_version $1; exit ;;
+            --build) BUILD=true ;;
+            --user) shift; USER=$1 ;;
+            --pass) shift; PASS=$1 ;;
+            build) shift; build_node $1; exit ;;
+            *) log "node" "Unknown argument $1"; exit 1 ;;
+        esac
+        shift
+    done
+}
+
+adone_arguments_handler() {
+    if test $# -eq 0; then
+        log "adone" "command required"  # print installed versions?
+        exit 1
+    fi
+
+    while test $# -ne 0; do
+        case $1 in
+            -d|--download) ACTIVATE=false ;;
+            install) shift; install $1; exit ;;
+            ls) display_installed_versions; exit ;;
+            ls-remote) display_remote_versions; exit ;;
+            latest) display_latest_version; exit ;;
+            stable) display_stable_version; exit ;;
+            activate) shift; activate $1; exit ;;
+            update) install latest; exit ;;
+            rm) shift; remove_version $1; exit ;;
+            *) log "adone" "Unknown argument $1"; exit 1 ;;
+        esac
+        shift
+    done
+}
+
+avm_arguments_handler() {
+    if test $# -eq 0; then
+        display_help
+        exit 1
+    fi
+    while test $# -ne 0; do
+        case $1 in
+            -h|--help) display_help; exit ;;
+            --version) display_avm_version; exit ;;
+            rm) remove_avm; exit ;;
+            install) install_avm; exit ;;
+            update) install_avm; exit ;;  # heh
+            -c|--clean) CLEAN=true ;;
+            bootstrap) bootstrap; exit ;;
+            deps) shift; deps_arguments_handler $@; exit ;;
+            node) shift; set_node; node_arguments_handler $@; exit ;;
+            adone) shift; set_adone; adone_arguments_handler $@; exit ;;
+            *) log "avm" "Unknown argument $1"; exit 1 ;;
+        esac
+        shift
+    done
+}
+
+avm_arguments_handler $@
