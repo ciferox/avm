@@ -61,6 +61,8 @@ ADONE_MIRROR=$AVM_MIRROR/adone
 ADONE_DIR=${ADONE_DIR-/usr/local/lib/adone}
 NODE_PREFIX=${NODE_PREFIX-/usr/local}
 ACTIVATE=true
+FORCE_ACTIVATE=false
+FORCE_INSTALL=false
 CLEAN=false
 
 BIN=
@@ -237,7 +239,7 @@ activate() {
     local version=$(resolve_version $1)
     local current=$(check_current_version)
 
-    if test -z $current || test $version != $current; then
+    if test -z $current || $FORCE_ACTIVATE || test $version != $current; then
         local dir=$VERSIONS_DIR/$BIN/$version
         if ! test -e $dir; then
             log "activate" "no such version"
@@ -333,7 +335,7 @@ install() {
     fi
     local dir=$VERSIONS_DIR/$BIN/$resolved
 
-    if ! test -e $dir; then
+    if ! test -e $dir || $FORCE_INSTALL; then
         log "install" "$resolved"
         local path=$(tarballpath $version)
 
@@ -418,7 +420,7 @@ remove_version() {
     local resolved=$(resolve_version $version)
     local current=$(check_current_version)
     if ! test -z $current && test $current = $resolved; then
-        echo "cannot remove currently active version"
+        log "remove" "cannot remove currently active version"
         exit 1
     fi
     local dir=$VERSIONS_DIR/$BIN/$resolved
@@ -427,7 +429,7 @@ remove_version() {
         rm -rf $dir
         log "remove" "done"
     else
-        log "remove" "no such version"
+        log "remove" "no such version installed"
     fi
 }
 
@@ -627,8 +629,8 @@ display_help() {
     avm node update                   The same as install latest
     avm node [--download] install <version>
                                       Install node.js version
-    avm node activate <version>       Activate node.js version
-    avm node rm <version>             Remove node.js version
+    avm node activate <version>       Activate installed node.js version
+    avm node rm <version>             Remove installed node.js version
     avm node [--build] build <version>
              [--user user]            Build node.js version from sources and upload it to adone.io
              [--pass pass]
@@ -638,10 +640,11 @@ display_help() {
     avm adone latest                  Display latest adone version
     avm adone stable                  Display stable adone version
     avm adone update                  The same as install latest
-    avm adone [--download] install <version>
+    avm adone [--download] [--force] [--force-activate] [--force-install] install <version>
                                       Install adone version
-    avm adone activate <version>      Activate adone version
-    avm adone rm <version>            Remove adone version
+    avm adone [--force] activate <version>
+                                      Activate installed adone version
+    avm adone rm <version>            Remove installed adone version
 
   Adone dependencies:
     avm deps                          List all the dependencies
@@ -651,13 +654,16 @@ display_help() {
 
   Options:
 
-    -V, --version   Output current version of avm
-    -h, --help      Display this help information
-    -d, --download  Only download
-    -c, --clean     Remove avm directory
-    -b, --build     Just build, do not upload
-    --user          Username for uploading
-    --pass          Password for uploading
+    -V, --version     Output current version of avm
+    -h, --help        Display this help information
+    -d, --download    Only download
+    -f, --force       Force activate/install
+    --force-install   Force install
+    --force-activate  Forca activate
+    -c, --clean       Remove avm directory
+    -b, --build       Just build, do not upload
+    --user            Username for uploading
+    --pass            Password for uploading
 
 EOF
 }
@@ -779,6 +785,9 @@ adone_arguments_handler() {
     while test $# -ne 0; do
         case $1 in
             -d|--download) ACTIVATE=false ;;
+            -f|--force) FORCE_ACTIVATE=true; FORCE_INSTALL=true ;;
+            --force-activate) FORCE_ACTIVATE=true ;;
+            --force-install) FORCE_INSTALL=true ;;
             install) shift; install $1; exit ;;
             ls) display_installed_versions; exit ;;
             ls-remote) display_remote_versions; exit ;;
