@@ -4,7 +4,7 @@ Complete Node.js and ADONE version management.
 
 ## Installation
 
-$ curl -L https://adone.io/dist/avm.sh | sudo bash -s install
+    $ curl -L https://adone.io/dist/avm.sh | sudo bash -s install
 
 ## Usage
 
