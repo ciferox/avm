@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.0] - 06.07.2017
+### Added
+- add libcurl4-openssl-dev dependency to deps
+
+### Changed
+- deps listing
+
 ## [0.1.0] - 02.07.2017
 ### Added
 - adone link command

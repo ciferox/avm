@@ -681,6 +681,7 @@ list_deps_packages() {
     cat <<-EOF
     libpcap-dev
     libusb-1.0.0-dev
+    libcurl4-openssl-dev
 EOF
 }
 
@@ -717,8 +718,21 @@ install_libpcap() {
     esac
 }
 
+install_libcurl4_openssl() {
+    local kernel=$(uname -s)
+    case $kernel in
+        Linux)
+            apt-get -y install libcurl4-openssl-dev
+        ;;
+        *)
+            log "libcurl4-openssl" "cannot install on $kernel"
+            exit 1
+        ;;
+    esac
+}
+
 deps_install() {
-    local deps=$(list_deps_packages | sed 's/-/ /' | awk '{ print $1 }')
+    local deps=$(list_deps_packages)
     if test $# -eq 0; then
         deps_install ${deps[@]}
         exit
@@ -730,8 +744,9 @@ deps_install() {
     for dep in $@; do
         log "deps" "install $dep"
         case $dep in
-            libusb) install_libusb ;;
-            libpcap) install_libpcap ;;
+            libusb*) install_libusb ;;
+            libpcap*) install_libpcap ;;
+            libcurl*) install_libcurl4_openssl ;;
         esac
         if test $? -ne 0; then
             log "deps" "installing of $dep failed"
@@ -745,7 +760,7 @@ deps_install() {
 deps_arguments_handler() {
     if test $# -eq 0; then
         for i in $(list_deps_packages); do
-            log $(echo $i | sed 's/-/ /')
+            log "$i"
         done
         exit
     fi
