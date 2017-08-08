@@ -255,9 +255,16 @@ install_avm() {
         log "avm" "need root permissions"
         exit 1
     fi
-    $GET $AVM_MIRROR/avm.sh > /usr/local/bin/avm
+    local tmpfile=$(mktemp)
+    $GET $AVM_MIRROR/avm.sh > $tmpfile
+    if test $? -ne 0; then
+        log "avm" "cannot download"
+        rm $tmpfile
+        exit 1
+    fi
     erase_line
-    chmod +x /usr/local/bin/avm
+    mv $tmpfile /usr/local/bin/avm
+    chmod +rx /usr/local/bin/avm
     mkdir -p /usr/local/lib/avm
     log "avm" "done"
 }
@@ -322,16 +329,24 @@ download() {
         mkdir -p $dir
         cd $dir
         log "fetch" "$url"
+        local tmpfile=$(mktemp)
+        $GET $url > $tmpfile
+        if test $? -ne 0; then
+            log "fetch" "cannot download"
+            rm $tmpfile
+            exit 1
+        fi
         case $BIN in
             node)
-                $GET $url | tar -zxf /dev/stdin --strip-components=1
+                tar -zxf $tmpfile --strip-components=1
+                disable_pax_mprotect bin/node
             ;;
             adone)
-                $GET $url | tar -zxf /dev/stdin
+                tar -zxf $tmpfile
             ;;
         esac
+        rm $tmpfile
         erase_line
-        disable_pax_mprotect bin/node
         log "download" "done"
     else
         log "download" "$resolved already downloaded"
@@ -460,17 +475,9 @@ tarballpath() {
 
     local resolved=$(resolve_version $version)
 
-    case $version in
-        latest)
-        ;;
-        stable)
-        ;;
-        *)
-            version="v$version"
-        ;;
-    esac
+    version="v$resolved"
 
-    echo /$version/$BIN-v$resolved-$os-$arch.tar.gz
+    echo /$version/$BIN-$version-$os-$arch.tar.gz
 }
 
 srcpath() {
