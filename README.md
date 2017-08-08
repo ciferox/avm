@@ -60,7 +60,22 @@ Help can be obtained from `avm --help`.
       -b, --build       Just build, do not upload
       --user            Username for uploading
       --pass            Password for uploading
-      
+
+## Supported Platforms
+
+### Linux
+
+Ubuntu 16.04+
+Debian 8+
+
+### FreeBSD
+
+Tested on FreeBSD 11.0
+
+## macOS
+
+Tested on OS X 10.11.15
+
 ## License
 
     Copyright 2017 Ciferox Inc. <adone@ciferox.com>
