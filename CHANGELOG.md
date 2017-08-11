@@ -1,7 +1,11 @@
 # Changelog
 
+## [0.2.2] - 11.07.2017
+### Added
+- add libssl-dev dependency
+
 ## [0.2.1] - 08.07.2017
-## Changed
+### Changed
 - add checks if node/adone/avm downloading is not failed
 - use resolved versions in node/adone links
 
