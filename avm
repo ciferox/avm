@@ -139,18 +139,17 @@ display_remote_versions() {
 }
 
 display_installed_versions() {
-    # if test -z $BIN; then
-    #     # BIN="adone"
-    #     # log "Adone"
-    #     # $(display_installed_versions)
-    #     BIN="node"
-    #     echo Node
-    #     display_installed_versions
-    #     echo adone
-    #     BIN="adone"
-    #     display_installed_versions
-    #     exit
-    # fi
+    case $BIN in
+        node)
+            display_installed_node_versions
+        ;;
+        adone)
+            display_installed_adone_versions
+        ;;
+    esac
+}
+
+display_installed_node_versions() {
     local contents=$(ls $VERSIONS_DIR/$BIN 2>/dev/null \
         | egrep -o "[0-9]+\.[0-9]+\.[0-9]+" \
         | sort -r -u -k 1,1n -k 2,2n -k 3,3n -t . \
@@ -161,7 +160,6 @@ display_installed_versions() {
     fi
     local current=$(check_current_version)
     local latest=$(get_latest_version)
-    local stable=$(get_stable_version)
     for v in $contents; do
         local resolved=$(resolve_version $v)
         case $resolved in
@@ -180,6 +178,50 @@ display_installed_versions() {
                 esac
             ;;
         esac
+    done
+}
+
+display_installed_adone_versions() {
+    local contents=$(ls $VERSIONS_DIR/$BIN 2>/dev/null \
+        | egrep -o "[0-9]+\.[0-9]+\.[0-9]+" \
+        | sort -r -u -k 1,1n -k 2,2n -k 3,3n -t . \
+        | awk '{ print " " $1 }'
+    )
+    if test $? -ne 0; then
+        exit
+    fi
+    local current=$(check_current_version)
+    local latest=$(get_latest_version)
+    local node_version=$(adone_node_version)
+    for v in $contents; do
+        local contents2=$(ls $VERSIONS_DIR/$BIN/$v 2>/dev/null \
+            | egrep -o "[0-9]+\.x" \
+            | sort -r -u -k 1,1n -t . \
+            | awk '{ print " " $1 }'
+        )
+        for nv in $contents2; do
+            if test $v = $current; then
+                if test $v = $latest; then
+                    if test $nv = $node_version; then
+                        log "current" "$v $nv" "(latest)"
+                    else
+                        log "latest" "$v $nv"
+                    fi
+                else
+                    if test $nv = $node_version; then
+                        log "current" "$v $nv"
+                    else
+                        log "$v $nv"
+                    fi
+                fi
+            else
+                if test $v = $latest; then
+                    log "latest" "$v $nv"
+                else
+                    log "$v $nv"
+                fi
+            fi;
+        done
     done
 }
 
@@ -213,19 +255,27 @@ disable_pax_mprotect() {
     fi
 }
 
+check_current_node_version() {
+    which node > /dev/null
+    if test $? -eq 0; then
+        node --version | cut -c 2-
+    fi
+}
+
+check_current_adone_version() {
+    which adone > /dev/null
+    if test $? -eq 0; then
+        adone --version
+    fi
+}
+
 check_current_version() {
     case $BIN in
         node)
-            which node > /dev/null
-            if test $? -eq 0; then
-                echo $(node --version | cut -c 2- )
-            fi
+            check_current_node_version
         ;;
         adone)
-            which adone > /dev/null
-            if test $? -eq 0; then
-                echo $(adone --version)
-            fi
+            check_current_adone_version
         ;;
     esac
 }
@@ -281,6 +331,45 @@ is_ok() {
 }
 
 download() {
+    case $BIN in
+        adone)
+            download_adone $1
+        ;;
+        node)
+            download_node $1
+        ;;
+    esac
+}
+
+node_tarball_path() {
+    local version=$1
+
+    local arch=x86
+    local uname=$(uname -a)
+
+    case $uname in
+        Linux*) os=linux ;;
+        Darwin*) os=darwin ;;
+        SunOS*) os=sunos ;;
+        FreeBSD*) os=freebsd ;;
+    esac
+
+    case $uname in
+        *x86_64*|*amd64*) arch=x64 ;;
+        *armv6l*) arch=armv6l ;;
+        *armv7l*) arch=armv7l ;;
+    esac
+
+    [ ! -z $ARCH ] && arch=$ARCH
+
+    local resolved=$(resolve_version $version)
+
+    version="v$resolved"
+
+    echo /$version/$BIN-$version-$os-$arch.tar.gz
+}
+
+download_node() {
     if is_avm_globally_installed && ! is_root_user; then
         log "download" "need root permissions"
         exit
@@ -298,17 +387,9 @@ download() {
 
     if ! test -e $dir || $FORCE; then
         log "download" "$resolved"
-        local path=$(tarballpath $version)
-
-        case $BIN in
-            node)
-                # check nodejs.org first
-                urls=("https://nodejs.org/dist$path" "$MIRROR$path")
-            ;;
-            adone)
-                urls=("$MIRROR$path")
-            ;;
-        esac
+        local path=$(node_tarball_path $version)
+        # check nodejs.org first
+        local urls=("https://nodejs.org/dist$path" "$MIRROR$path")
 
         local url
 
@@ -336,15 +417,104 @@ download() {
             rm $tmpfile
             exit 1
         fi
-        case $BIN in
-            node)
-                tar -zxf $tmpfile --strip-components=1
-                disable_pax_mprotect bin/node
-            ;;
-            adone)
-                tar -zxf $tmpfile
-            ;;
-        esac
+
+        tar -zxf $tmpfile --strip-components=1
+        disable_pax_mprotect bin/node
+
+        rm $tmpfile
+        erase_line
+        log "download" "done"
+    else
+        log "download" "$resolved already downloaded"
+    fi
+}
+
+adone_tarball_path() {
+    local version=$1
+    local node_version=$2
+
+    local arch=x86
+    local uname=$(uname -a)
+
+    case $uname in
+        Linux*) os=linux ;;
+        Darwin*) os=darwin ;;
+        SunOS*) os=sunos ;;
+        FreeBSD*) os=freebsd ;;
+    esac
+
+    case $uname in
+        *x86_64*|*amd64*) arch=x64 ;;
+        *armv6l*) arch=armv6l ;;
+        *armv7l*) arch=armv7l ;;
+    esac
+
+    [ ! -z $ARCH ] && arch=$ARCH
+
+    local resolved=$(resolve_version $version)
+
+    version="v$resolved"
+    node_version="v$node_version"
+
+    echo /$version/$BIN-$version-$os-$arch-node-$node_version.tar.gz
+}
+
+adone_node_version() {
+    echo $(check_current_node_version | grep -Eo "^[0-9]+\.")x
+}
+
+download_adone() {
+    if is_avm_globally_installed && ! is_root_user; then
+        log "download" "need root permissions"
+        exit
+    fi
+    local version=$1
+    local latest=$(get_latest_version)
+    local resolved
+    if test $version = $latest; then
+        version="latest"
+        resolved=$latest
+    else
+        resolved=$(resolve_version $version)
+    fi
+    local node_version=$(adone_node_version)
+
+    local dir=$VERSIONS_DIR/$BIN/$resolved/$node_version
+
+    if ! test -e $dir || $FORCE; then
+        log "node" "$node_version"
+        log "download" "$resolved"
+        local path=$(adone_tarball_path $version $node_version)
+
+        local urls=("$MIRROR$path")
+
+        local url
+
+        for i in ${urls[@]}; do
+            if is_ok $i; then
+                url=$i
+                break
+            else
+                log "fetch" "cannot find $i"
+            fi
+        done
+
+        if test -z $url; then
+            log "fetch" "cannot find any tarball"
+            exit 1
+        fi
+        rm -r $dir 2>/dev/null
+        mkdir -p $dir
+        cd $dir
+        log "fetch" "$url"
+        local tmpfile=$(mktemp)
+        $GET $url > $tmpfile
+        if test $? -ne 0; then
+            log "fetch" "cannot download"
+            rm $tmpfile
+            exit 1
+        fi
+        tar -zxf $tmpfile
         rm $tmpfile
         erase_line
         log "download" "done"
@@ -354,13 +524,24 @@ download() {
 }
 
 activate() {
+    case $BIN in
+        node)
+            activate_node $1
+        ;;
+        adone)
+            activate_adone $1
+        ;;
+    esac
+}
+
+activate_node() {
     local version=$(resolve_version $1)
     local current=$(check_current_version)
 
     if test -z $current || $FORCE || test $version != $current; then
         local dir=$VERSIONS_DIR/$BIN/$version
         if ! test -e $dir; then
-            log "activate" "no such version"
+            log "activate" "no such node version"
             exit 1
         fi
         if ! is_root_user; then
@@ -368,36 +549,58 @@ activate() {
             exit 1
         fi
         log "activate" "$version"
-        case $BIN in
-            node)
-                for subdir in bin lib include share; do
-                    if test -L "$NODE_PREFIX/$subdir"; then
-                        sudo find "$dir/$subdir" -mindepth 1 -maxdepth 1 -exec cp -fR "{}" "$NODE_PREFIX/$subdir"
-                    else
-                        sudo cp -fR "$dir/$subdir" $NODE_PREFIX
-                    fi
-                done
-            ;;
-            adone)
-                rm -rf $ADONE_DIR
-                cp -r $dir $ADONE_DIR
-                if test -e /usr/local/bin/adone; then
-                    rm /usr/local/bin/adone
-                fi
-                ln -s $ADONE_DIR/bin/adone.js /usr/local/bin/adone
-                local prefix=$(npm config get prefix)
-                mkdir -p $prefix/lib/node
-                if ! test -e $prefix/lib/node/adone; then
-                    ln -s $ADONE_DIR $prefix/lib/node/adone
-                else
-                    log "activate" "$prefix/lib/node/adone already exists"
-                fi
-            ;;
-        esac
-        # disable_pax_mprotect "$NODE_PREFIX/bin/node"
+
+        for subdir in bin lib include share; do
+            if test -L "$NODE_PREFIX/$subdir"; then
+                sudo find "$dir/$subdir" -mindepth 1 -maxdepth 1 -exec cp -fR "{}" "$NODE_PREFIX/$subdir"
+            else
+                sudo cp -fR "$dir/$subdir" $NODE_PREFIX
+            fi
+        done
+
         log "activate" "done"
     else
         log "activate" "$version already activated"
+    fi
+}
+
+activate_adone() {
+    local version=$(resolve_version $1)
+    local current=$(check_current_version)
+    local node_version=$(adone_node_version)
+    local activated_for_node=$(cat $ADONE_DIR/.activated_for_node 2>/dev/null)
+
+    if test -z $current || $FORCE || test $version != $current || ( test -n $activated_for_node && test $activated_for_node != $node_version ); then
+        local dir=$VERSIONS_DIR/$BIN/$version/$node_version
+        log "node" "$node_version"
+        if ! test -e $dir; then
+            log "activate" "no such adone version"
+            exit 1
+        fi
+        if ! is_root_user; then
+            log "activate" "need root permissions"
+            exit 1
+        fi
+        log "activate" "$version"
+
+        rm -rf $ADONE_DIR
+        cp -r $dir $ADONE_DIR
+        echo $node_version > $ADONE_DIR/.activated_for_node
+        if test -e /usr/local/bin/adone; then
+            rm /usr/local/bin/adone
+        fi
+        ln -s $ADONE_DIR/bin/adone.js /usr/local/bin/adone
+        local prefix=$(npm config get prefix)
+        mkdir -p $prefix/lib/node
+        if ! test -e $prefix/lib/node/adone; then
+            ln -s $ADONE_DIR $prefix/lib/node/adone
+        else
+            log "activate" "$prefix/lib/node/adone already exists"
+        fi
+
+        log "activate" "done"
+    else
+        log "activate" "$version $node_version already activated"
     fi
 }
 
@@ -450,34 +653,6 @@ remove_version() {
     else
         log "remove" "no such version installed"
     fi
-}
-
-tarballpath() {
-    local version=$1
-
-    local arch=x86
-    local uname=$(uname -a)
-
-    case $uname in
-        Linux*) os=linux ;;
-        Darwin*) os=darwin ;;
-        SunOS*) os=sunos ;;
-        FreeBSD*) os=freebsd ;;
-    esac
-
-    case $uname in
-        *x86_64*|*amd64*) arch=x64 ;;
-        *armv6l*) arch=armv6l ;;
-        *armv7l*) arch=armv7l ;;
-    esac
-
-    [ ! -z $ARCH ] && arch=$ARCH
-
-    local resolved=$(resolve_version $version)
-
-    version="v$resolved"
-
-    echo /$version/$BIN-$version-$os-$arch.tar.gz
 }
 
 srcpath() {
