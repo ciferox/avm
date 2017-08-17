@@ -1,22 +1,29 @@
 # Changelog
 
-## [0.2.2] - 11.07.2017
+## [0.3.0] - 17.08.2017
+### Added
+- adone downloader/activator now uses the currently used node.js version
+
+### Changed
+- adone ls output
+
+## [0.2.2] - 11.08.2017
 ### Added
 - add libssl-dev dependency
 
-## [0.2.1] - 08.07.2017
+## [0.2.1] - 08.08.2017
 ### Changed
 - add checks if node/adone/avm downloading is not failed
 - use resolved versions in node/adone links
 
-## [0.2.0] - 06.07.2017
+## [0.2.0] - 06.08.2017
 ### Added
 - add libcurl4-openssl-dev dependency to deps
 
 ### Changed
 - deps listing
 
-## [0.1.0] - 02.07.2017
+## [0.1.0] - 02.08.2017
 ### Added
 - adone link command
 - adone rm-link command
