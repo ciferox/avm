@@ -54,11 +54,14 @@ if test -e $AVM_DIR && ! test -d $AVM_DIR; then
     exit 1
 fi
 
+ORIGINAL_USER=${SUDO_USER:-$(whoami)}
+ORIGINAL_GROUP=$(id -g $ORIGINAL_USER)
+ORIGINAL_USER_HOME_DIR=$(eval echo ~$ORIGINAL_USER)
 VERSIONS_DIR=$AVM_DIR/versions
 AVM_MIRROR=${AVM_MIRROR-https://adone.io}/dist
 NODE_MIRROR=$AVM_MIRROR/node
 ADONE_MIRROR=$AVM_MIRROR/adone
-ADONE_DIR=${ADONE_DIR-/usr/local/lib/adone}
+ADONE_DIR=${ADONE_DIR-$ORIGINAL_USER_HOME_DIR/.adone}
 NODE_PREFIX=${NODE_PREFIX-/usr/local}
 FORCE=false
 CLEAN=false
@@ -91,6 +94,7 @@ erase_line() {
 
 get_latest_version() {
     $GET $MIRROR/latest/ --header 'Accept: text/plain' 2>/dev/null \
+        | sed "s|$AVM_MIRROR||" \
         | egrep -o "[0-9]+\.[0-9]+\.[0-9]+" \
         | head -n 1
 }
@@ -262,10 +266,22 @@ check_current_node_version() {
     fi
 }
 
+run_as_original_user() {
+    sudo -u $ORIGINAL_USER "$@"
+}
+
+run_adone() {
+    if is_root_user; then
+        run_as_original_user adone "$@"
+    else
+        adone "$@"
+    fi
+}
+
 check_current_adone_version() {
     which adone > /dev/null
     if test $? -eq 0; then
-        adone --version
+        run_adone --version
     fi
 }
 
@@ -564,13 +580,58 @@ activate_node() {
     fi
 }
 
+is_omnitron_alive() {
+    test "$(run_adone omnitron ping)" = "OK"
+}
+
+stop_omnitron() {
+    # check if it is a service
+    local uname=$(uname -a)
+    case $uname in
+        Linux*)
+            if systemctl is-active omnitron > /dev/null 2>&1; then
+                systemctl stop omnitron
+                echo "service"
+                return
+            fi
+        ;;
+    esac
+
+    run_adone omnitron stop
+    echo "manual"
+}
+
+start_omnitron() {
+    run_adone omnitron start
+}
+
+start_omnitron_service() {
+    local uname=$(uname -a)
+    case $uname in
+        Linux*)
+            if systemctl is-enabled omnitron > /dev/null 2>&1; then
+                systemctl start omnitron
+            fi
+        ;;
+    esac
+}
+
 activate_adone() {
     local version=$(resolve_version $1)
     local current=$(check_current_version)
     local node_version=$(adone_node_version)
     local activated_for_node=$(cat $ADONE_DIR/.activated_for_node 2>/dev/null)
 
-    if test -z $current || $FORCE || test $version != $current || ( test -n $activated_for_node && test $activated_for_node != $node_version ); then
+    if test -z "$current" || $FORCE || test "$version" != "$current" || ( test -n "$activated_for_node" && test "$activated_for_node" != "$node_version" ); then
+        local alive_omnitron=false
+        if test -n "$current" && is_omnitron_alive; then
+            alive_omnitron=true
+        fi;
+        local stop_mode
+        if $alive_omnitron; then
+            log "activate" "stop omnitron"
+            stop_mode=$(stop_omnitron)
+        fi
         local dir=$VERSIONS_DIR/$BIN/$version/$node_version
         log "node" "$node_version"
         if ! test -e $dir; then
@@ -583,21 +644,60 @@ activate_adone() {
         fi
         log "activate" "$version"
 
-        rm -rf $ADONE_DIR
-        cp -r $dir $ADONE_DIR
-        echo $node_version > $ADONE_DIR/.activated_for_node
-        if test -e /usr/local/bin/adone; then
-            rm /usr/local/bin/adone
+        local adone_files=".meta bin etc lib package.json"
+
+        if test -e $ADONE_DIR; then
+            for file in $adone_files; do
+                rm -rf $ADONE_DIR/$file 2> /dev/null
+            done
+        else
+            # try to create the directory as the original user
+            run_as_original_user mkdir -p $ADONE_DIR 2> /dev/null
+            if test $? != 0; then
+                # failed, create as the root
+                mkdir -p $ADONE_DIR
+            fi
         fi
-        ln -s $ADONE_DIR/bin/adone.js /usr/local/bin/adone
+
+        for file in $adone_files; do
+            cp -r $dir/$file $ADONE_DIR
+        done
+
+        if test $(ls -ld $ADONE_DIR | awk '{ print $3 }') != "root"; then
+            local user_group=$(ls -ld $ADONE_DIR | awk '{ print $3 ":" $4 }')
+            for file in $adone_files; do
+                chown -R $user_group $ADONE_DIR/$file
+            done
+        fi
+
+        run_as_original_user touch $ADONE_DIR/.activated_for_node 2> /dev/null
+        echo $node_version > $ADONE_DIR/.activated_for_node
+
+        if test -e /usr/local/bin/adone; then
+            log "activate" "/usr/local/bin/adone already exists"
+        else
+            ln -s $ADONE_DIR/bin/adone.js /usr/local/bin/adone
+        fi
+
+
         local prefix=$(npm config get prefix)
+
         mkdir -p $prefix/lib/node
+
         if ! test -e $prefix/lib/node/adone; then
             ln -s $ADONE_DIR $prefix/lib/node/adone
         else
             log "activate" "$prefix/lib/node/adone already exists"
         fi
 
+        if $alive_omnitron; then
+            log "activate" "start omnitron"
+            if test "$stop_mode" = "manual"; then
+                start_omnitron
+            else
+                start_omnitron_service
+            fi
+        fi
         log "activate" "done"
     else
         log "activate" "$version $node_version already activated"
@@ -638,20 +738,28 @@ remove_avm() {
 }
 
 remove_version() {
-    local version=$1
-    local resolved=$(resolve_version $version)
-    local current=$(check_current_version)
-    if ! test -z $current && test $current = $resolved; then
-        log "remove" "cannot remove currently active version"
+    if ! is_root_user; then
+        log "remove" "need root permissions"
         exit 1
     fi
-    local dir=$VERSIONS_DIR/$BIN/$resolved
-    if test -e $dir; then
-        log "remove" "$resolved"
-        rm -rf $dir
-        log "remove" "done"
+    local version=$1
+    if test -n "$version"; then
+        local resolved=$(resolve_version $version)
+        local current=$(check_current_version)
+        local dir=$VERSIONS_DIR/$BIN/$resolved
+        if test -e $dir; then
+            log "remove" "$resolved"
+            rm -rf $dir
+            log "remove" "done"
+        else
+            log "remove" "no such version installed"
+        fi
     else
-        log "remove" "no such version installed"
+        for file in $(ls $VERSIONS_DIR/$BIN); do
+            log "remove" "$file"
+            rm -rf $dir
+        done
+        log "remove" "done"
     fi
 }
 
@@ -740,7 +848,19 @@ build_node() {
     log "build" "start in 5 seconds"
     sleep 5
 
-    make binary
+    local uname=$(uname -a)
+
+    case $uname in
+        FreeBSD*)
+            # have to fix the makefile to support amd64
+            cat Makefile \
+                | sed 's/^DESTCPU ?= x86$/ifeq ($(findstring amd64,$(UNAME_M)),amd64)@@DESTCPU ?= x64@@else@@DESTCPU ?= x86@@endif/' \
+                | perl -pe 's,@@,chr(0xa),ge' > Makefile2
+            mv Makefile2 Makefile
+        ;;
+    esac
+
+    make binary -j4
 
     if test $? -ne 0; then
         log "build" "make binary failed"
@@ -756,7 +876,6 @@ build_node() {
     fi
 
     local arch=x86
-    local uname=$(uname -a)
     local os
 
     case $uname in
@@ -806,6 +925,7 @@ display_help() {
   avm update                          Actually, the same as install
   avm rm                              Remove avm
   avm [--clean] bootstrap             Install latest node.js and adone versions
+  avm info                            Show info about os and node/adone versions
 
   Node.js management:
     avm node ls                       Display installed node.js versions
@@ -835,7 +955,7 @@ display_help() {
                                       Activate downloaded adone version
     avm adone [--force] install <version>
                                       Download and activate adone version
-    avm adone rm <version>            Remove installed adone version
+    avm adone rm [<version>]            Remove installed adone version
     avm adone link <name>             Create a symbolic link to adone binary
     avm adone rm-link <name>          Remove a symbolic link to adone binary
 
@@ -865,6 +985,7 @@ list_deps_packages() {
     libusb-1.0.0-dev
     libcurl4-openssl-dev
     libssl-dev
+    libvirt-dev
 EOF
 }
 
@@ -927,6 +1048,19 @@ install_libssl() {
     esac
 }
 
+install_libvirt() {
+    local kernel=$(uname -s)
+    case $kernel in
+        Linux)
+            apt-get -y install libvirt-dev
+        ;;
+        *)
+            log "libssl" "cannot install on $kernel"
+            exit 1
+        ;;
+    esac
+}
+
 deps_install() {
     local deps=$(list_deps_packages)
     if test $# -eq 0; then
@@ -944,6 +1078,7 @@ deps_install() {
             libpcap*) install_libpcap ;;
             libcurl*) install_libcurl4_openssl ;;
             libssl*) install_libssl ;;
+            libvirt*) install_libvirt ;;
         esac
         if test $? -ne 0; then
             log "deps" "installing of $dep failed"
@@ -1002,6 +1137,22 @@ adone_rm_link() {
     fi
 }
 
+info() {
+    log "os" "$(uname -s) $(uname -i) $(uname -o) $(uname -v)"
+    local node_version=$(check_current_node_version)
+    if test -n node_version; then
+        log "node" "$node_version"
+    else
+        log "node" "not installed"
+    fi
+    local adone_version=$(check_current_adone_version)
+    if test -n "$adone_version"; then
+        log "adone" "$adone_version"
+    else
+        log "adone" "not installed"
+    fi
+}
+
 node_arguments_handler() {
     if test $# -eq 0; then
         log "node" "command required"  # print installed versions?
@@ -1050,6 +1201,7 @@ adone_arguments_handler() {
             rm) shift; remove_version $1; exit ;;
             link) shift; adone_link $1; exit ;;
             rm-link) shift; adone_rm_link $1; exit ;;
+            --prefix) shift; ADONE_DIR=$1; ;;
             *) log "adone" "Unknown argument $1"; exit 1 ;;
         esac
         shift
@@ -1064,7 +1216,7 @@ avm_arguments_handler() {
     while test $# -ne 0; do
         case $1 in
             -h|--help) display_help; exit ;;
-            --version) display_avm_version; exit ;;
+            -v|--version) display_avm_version; exit ;;
             rm) remove_avm; exit ;;
             install) install_avm; exit ;;
             update) install_avm; exit ;;  # heh
@@ -1073,6 +1225,7 @@ avm_arguments_handler() {
             deps) shift; deps_arguments_handler $@; exit ;;
             node) shift; set_node; node_arguments_handler $@; exit ;;
             adone) shift; set_adone; adone_arguments_handler $@; exit ;;
+            info) info; exit ;;
             *) log "avm" "Unknown argument $1"; exit 1 ;;
         esac
         shift
