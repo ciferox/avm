@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.4.0] - 21.08.2017
+### Added
+- info command
+- prefix option for adone install
+- patch for FreeBSD Node.js building
+- libvirt dep
+- v alias for version
+
+### Changed
+- install command starts/stops omnitron
+- now adone's installation path is ~/.adone by default
+- now adone runs under the original user
+- rm can remove the current version
+- rm can remove all the node/adone versions
+
 ## [0.3.0] - 17.08.2017
 ### Added
 - adone downloader/activator now uses the currently used node.js version
