@@ -1,5 +1,9 @@
 # Changelog
 
+## [0.5.0] - 23.08.2017
+### Added
+- functions for uploading node and avm
+
 ## [0.4.0] - 21.08.2017
 ### Added
 - info command
