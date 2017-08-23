@@ -4,7 +4,7 @@
 # Adone and Node version managing script
 #
 
-VERSION="0.5.0"
+VERSION="0.5.1"
 INSTALLED_AVM_BIN=/usr/local/bin/avm
 
 check_installed_avm() {
@@ -65,6 +65,7 @@ ADONE_DIR=${ADONE_DIR-$ORIGINAL_USER_HOME_DIR/.adone}
 NODE_PREFIX=${NODE_PREFIX-/usr/local}
 FORCE=false
 CLEAN=false
+LATEST=false
 
 BIN=
 MIRROR=
@@ -837,13 +838,49 @@ upload_node() {
         log "upload" "username and password is required for uploading"
         exit 1
     fi
-    for file in "$@"; do
+    if ! test -e $1; then
+        log "upload" "such a file doesnt exist $1"
+    fi
+    local files
+    if test -d $1; then
+        cd $1
+        files=$(ls node*tar*)
+    else
+        files=$1
+    fi
+
+    local arch=x86
+    local os
+    local uname=$(uname -a)
+
+    case $uname in
+        Linux*) os=linux ;;
+        Darwin*) os=darwin ;;
+        SunOS*) os=sunos ;;
+        FreeBSD*) os=freebsd ;;
+    esac
+
+    case $uname in
+        *x86_64*|*amd64*) arch=x64 ;;
+        *armv6l*) arch=armv6l ;;
+        *armv7l*) arch=armv7l ;;
+    esac
+
+    for file in $files; do
         local archive_type=${file: -2}
         if test $archive_type != "xz" && test $archive_type != "gz"; then
             log "upload" "unknown archive type $file"
         else
+            [[ "${file##*/}" =~ node-v([0-9]+\.[0-9]+\.[0-9]+)- ]]
+            local version=${BASH_REMATCH[1]}
+            local build;
+            if $LATEST; then
+                build="latest"
+            else
+                build=$version
+            fi
             log "upload" "$file to $AVM_MIRROR"
-            curl -# -s --data-binary @$file -X POST -u $USER:$PASS -f "$AVM_MIRROR/?os=$os&arch=$arch&type=$archive_type&version=$resolved&subject=node&build=$version" > /dev/null
+            curl -# -s --data-binary @$file -X POST -u $USER:$PASS -f "$AVM_MIRROR/?os=$os&arch=$arch&type=$archive_type&version=$version&subject=node&build=$build" > /dev/null
             local exit_code=$?
             if test $exit_code != 0; then
                 if test $exit_code = 22; then
@@ -947,7 +984,20 @@ build_node() {
         ;;
     esac
 
-    upload_node node*tar*
+    for file in node*tar*; do
+        local archive_type=${file: -2}
+        log "build" "upload $file to $AVM_MIRROR"
+        curl -# -s --data-binary @$file -X POST -u $USER:$PASS "$AVM_MIRROR/?os=$os&arch=$arch&type=$archive_type&version=$resolved&subject=node&build=$version" > /dev/null
+        local exit_code=$?
+        if test $exit_code != 0; then
+            if test $exit_code = 22; then
+                log "build" "uploading failed, http server returned code >= 400"
+            else
+                log "build" "uploading failed with exit code $exit_code"
+            fi
+            exit 1
+        fi
+    done;
 
     log "build" "uploaded"
 
@@ -988,6 +1038,7 @@ display_help() {
              [--pass <pass>]
     avm node [--user <user>] upload <path>
              [--pass <pass>]          Upload node.js builds
+             [--latest]
   Adone management:
     avm adone ls                      Display installed adone versions
     avm adone ls-remote               Display available to install adone versions
@@ -1219,8 +1270,9 @@ node_arguments_handler() {
             --build) BUILD=true ;;
             --user) shift; USER=$1 ;;
             --pass) shift; PASS=$1 ;;
+            --latest) LATEST=true ;;
             build) shift; build_node $1; exit ;;
-            upload) shift; upload_node "$@"; exit ;;
+            upload) shift; upload_node $1; exit ;;
             *) log "node" "Unknown argument $1"; exit 1 ;;
         esac
         shift

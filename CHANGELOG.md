@@ -1,5 +1,9 @@
 # Changelog
 
+## [0.5.1] - 23.08.2017
+- node upload function fixes
+- add latest flag for node upload
+
 ## [0.5.0] - 23.08.2017
 ### Added
 - functions for uploading node and avm
