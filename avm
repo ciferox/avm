@@ -335,6 +335,26 @@ install_avm() {
     log "avm" "done"
 }
 
+upload_avm() {
+    if test -z $USER || test -z $PASS; then
+        log "upload" "username and password is required for uploading"
+        exit 1
+    fi
+    log "upload" "$1 to $AVM_MIRROR"
+    curl -# -s --data-binary @$1 -X POST -u $USER:$PASS -f "$AVM_MIRROR/?subject=avm" > /dev/null
+    local exit_code=$?
+    if test $exit_code != 0; then
+        if test $exit_code = 22; then
+            log "upload" "uploading failed, http server returned code >= 400"
+        else
+            log "upload" "uploading failed with exit code $exit_code"
+        fi
+        exit 1
+    else
+        log "upload" "done"
+    fi
+}
+
 is_ok() {
     case $FETCH_BIN in
         curl)
@@ -812,6 +832,32 @@ BUILD=
 USER=
 PASS=
 
+upload_node() {
+    if test -z $USER || test -z $PASS; then
+        log "upload" "username and password is required for uploading"
+        exit 1
+    fi
+    for file in "$@"; do
+        local archive_type=${file: -2}
+        if test $archive_type != "xz" && test $archive_type != "gz"; then
+            log "upload" "unknown archive type $file"
+        else
+            log "upload" "$file to $AVM_MIRROR"
+            curl -# -s --data-binary @$file -X POST -u $USER:$PASS -f "$AVM_MIRROR/?os=$os&arch=$arch&type=$archive_type&version=$resolved&subject=node&build=$version" > /dev/null
+            local exit_code=$?
+            if test $exit_code != 0; then
+                if test $exit_code = 22; then
+                    log "upload" "uploading failed, http server returned code >= 400"
+                else
+                    log "upload" "uploading failed with exit code $exit_code"
+                fi
+                exit 1
+            fi
+        fi
+    done;
+    log "upload" "done"
+}
+
 build_node() {
     if test $BIN != "node"; then
         log "build" "available only for node"
@@ -901,11 +947,7 @@ build_node() {
         ;;
     esac
 
-    for file in node*tar*; do
-        local archive_type=${file: -2}
-        log "build" "upload $file to $AVM_MIRROR"
-        curl -# -s --data-binary @$file -X POST -u $USER:$PASS "$AVM_MIRROR/?os=$os&arch=$arch&type=$archive_type&version=$resolved&subject=node&build=$version" > /dev/null
-    done;
+    upload_node node*tar*
 
     log "build" "uploaded"
 
@@ -926,7 +968,8 @@ display_help() {
   avm rm                              Remove avm
   avm [--clean] bootstrap             Install latest node.js and adone versions
   avm info                            Show info about os and node/adone versions
-
+  avm --user <user> upload <path>     Upload avm script
+      --pass <pass>
   Node.js management:
     avm node ls                       Display installed node.js versions
     avm node ls-remote                Display available to install node.js versions
@@ -941,8 +984,10 @@ display_help() {
                                       Download and activate node.js version
     avm node rm <version>             Remove installed node.js version
     avm node [--build] build <version>
-             [--user user]            Build node.js version from sources and upload it to adone.io
-             [--pass pass]
+             [--user <user>]          Build node.js version from sources and upload it to adone.io
+             [--pass <pass>]
+    avm node [--user <user>] upload <path>
+             [--pass <pass>]          Upload node.js builds
   Adone management:
     avm adone ls                      Display installed adone versions
     avm adone ls-remote               Display available to install adone versions
@@ -1175,6 +1220,7 @@ node_arguments_handler() {
             --user) shift; USER=$1 ;;
             --pass) shift; PASS=$1 ;;
             build) shift; build_node $1; exit ;;
+            upload) shift; upload_node "$@"; exit ;;
             *) log "node" "Unknown argument $1"; exit 1 ;;
         esac
         shift
@@ -1226,6 +1272,9 @@ avm_arguments_handler() {
             node) shift; set_node; node_arguments_handler $@; exit ;;
             adone) shift; set_adone; adone_arguments_handler $@; exit ;;
             info) info; exit ;;
+            --user) shift; USER=$1 ;;
+            --pass) shift; PASS=$1 ;;
+            upload) shift; upload_avm $1 ;;
             *) log "avm" "Unknown argument $1"; exit 1 ;;
         esac
         shift
