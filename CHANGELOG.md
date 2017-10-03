@@ -1,11 +1,19 @@
 # Changelog
 
+## [0.5.3] - 03.10.2017
+### Changed
+- change default node mirror to nodejs.org
+
 ## [0.5.2] - 24.09.2017
+### Changed
 - rename .meta to .adone and add adone.conf.json for adone activator
 
 ## [0.5.1] - 23.08.2017
-- node upload function fixes
+### Added
 - add latest flag for node upload
+
+### Changed
+- node upload function fixes
 
 ## [0.5.0] - 23.08.2017
 ### Added

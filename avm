@@ -4,7 +4,7 @@
 # Adone and Node version managing script
 #
 
-VERSION="0.5.2"
+VERSION="0.5.3"
 INSTALLED_AVM_BIN=/usr/local/bin/avm
 
 check_installed_avm() {
@@ -59,7 +59,7 @@ ORIGINAL_GROUP=$(id -g $ORIGINAL_USER)
 ORIGINAL_USER_HOME_DIR=$(eval echo ~$ORIGINAL_USER)
 VERSIONS_DIR=$AVM_DIR/versions
 AVM_MIRROR=${AVM_MIRROR-https://adone.io}/dist
-NODE_MIRROR=$AVM_MIRROR/node
+NODE_MIRROR=https://nodejs.org/dist
 ADONE_MIRROR=$AVM_MIRROR/adone
 ADONE_DIR=${ADONE_DIR-$ORIGINAL_USER_HOME_DIR/.adone}
 NODE_PREFIX=${NODE_PREFIX-/usr/local}
