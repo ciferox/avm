@@ -1,5 +1,9 @@
 # Changelog
 
+## [0.5.4] - 10.10.2017
+### Changed
+- adone.conf.json -> adone.json
+
 ## [0.5.3] - 03.10.2017
 ### Changed
 - change default node mirror to nodejs.org
