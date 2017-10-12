@@ -4,7 +4,7 @@
 # Adone and Node version managing script
 #
 
-VERSION="0.5.4"
+VERSION="0.5.5"
 INSTALLED_AVM_BIN=/usr/local/bin/avm
 
 check_installed_avm() {
@@ -1082,6 +1082,7 @@ list_deps_packages() {
     libcurl4-openssl-dev
     libssl-dev
     libvirt-dev
+    libfuse-dev
 EOF
 }
 
@@ -1157,6 +1158,19 @@ install_libvirt() {
     esac
 }
 
+install_libfuse() {
+    local kernel=$(uname -s)
+    case $kernel in
+        Linux)
+            apt-get -y install libfuse-dev
+        ;;
+        *)
+            log "libfuse" "cannot install on $kernel"
+            exit 1
+        ;;
+    esac
+}
+
 deps_install() {
     local deps=$(list_deps_packages)
     if test $# -eq 0; then
@@ -1175,6 +1189,7 @@ deps_install() {
             libcurl*) install_libcurl4_openssl ;;
             libssl*) install_libssl ;;
             libvirt*) install_libvirt ;;
+            libfuse*) install_libfuse ;;
         esac
         if test $? -ne 0; then
             log "deps" "installing of $dep failed"

@@ -1,5 +1,9 @@
 # Changelog
 
+## [0.5.5] - 13.10.2017
+### Added
+- add libfuse dep
+
 ## [0.5.4] - 10.10.2017
 ### Changed
 - adone.conf.json -> adone.json
