@@ -4,7 +4,7 @@
 # Adone and Node version managing script
 #
 
-VERSION="0.5.5"
+VERSION="0.5.6"
 INSTALLED_AVM_BIN=/usr/local/bin/avm
 
 check_installed_avm() {
@@ -665,7 +665,7 @@ activate_adone() {
         fi
         log "activate" "$version"
 
-        local adone_files=".adone bin etc lib package.json adone.json"
+        local adone_files=".adone bin etc lib package.json adone.json realm.js"
 
         if test -e $ADONE_DIR; then
             for file in $adone_files; do

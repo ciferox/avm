@@ -1,5 +1,9 @@
 # Changelog
 
+## [0.5.6] - 12.11.2017
+### Added
+- realm.js to adone files for activation
+
 ## [0.5.5] - 13.10.2017
 ### Added
 - add libfuse dep
